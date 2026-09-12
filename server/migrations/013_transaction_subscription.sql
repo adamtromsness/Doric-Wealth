@@ -1,0 +1,3 @@
+-- Historically added transactions.subscription_id to link a transaction to the
+-- subscription it pays. Superseded by the many-to-many line_tags table
+-- (migration 019) and dropped in migration 020, so this migration is now a no-op.

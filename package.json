@@ -1,0 +1,20 @@
+{
+  "name": "finance-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Self-hosted budgeting, receipt-level tracking, utilities, vehicle cost-of-ownership, and wealth tracking with AI analysis.",
+  "scripts": {
+    "install:all": "cd server && npm install && cd ../web && npm install",
+    "db:up": "docker compose up -d",
+    "db:down": "docker compose down",
+    "migrate": "cd server && npm run migrate",
+    "seed": "cd server && npm run seed",
+    "setup": "npm run db:up && sleep 4 && npm run migrate && npm run seed",
+    "dev:server": "cd server && npm run dev",
+    "dev:web": "cd web && npm run dev",
+    "dev": "concurrently -n server,web -c blue,magenta \"npm:dev:server\" \"npm:dev:web\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

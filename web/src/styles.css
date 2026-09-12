@@ -1,0 +1,656 @@
+:root {
+  /* ---- Doric brand palette ----
+     Stone, navy, bronze and muted green. Strong financial structure;
+     clear records; long-term stability. */
+  --navy: #0F1B2D;         /* deep navy — primary brand, headers, active nav */
+  --charcoal: #23262B;     /* primary text */
+  --stone: #E7E2D6;        /* warm stone — borders, backgrounds */
+  --ivory: #FAF8F4;        /* page background */
+  --bronze: #B78A4A;       /* highlights, premium accents, selected states */
+  --bronze-deep: #9C7438;  /* deeper bronze for accent text / eyebrows */
+  --sage: #6B7F6E;         /* calm growth / supporting positive */
+  --slate-blue: #5A6F87;   /* secondary data visualization */
+  --warm-sand: #DCCFB5;    /* soft secondary surface */
+  --soft-gold: #D4AF6A;    /* premium accent / CTA highlight */
+  --muted-olive: #8A946E;  /* supporting chart accent */
+
+  /* ---- Semantic tokens (mapped onto the Doric palette) ---- */
+  --ink: #23262B;          /* charcoal — primary text */
+  --ink-soft: #3A3F46;     /* slightly lifted charcoal */
+  --muted: #767C85;        /* muted slate-grey metadata */
+  --canvas: #FAF8F4;       /* ivory page background */
+  --surface: #ffffff;
+  --surface-alt: #F3F0E8;  /* stone-tinted zebra / alt surface */
+  --hairline: rgba(15, 27, 45, 0.10);
+  --hairline-strong: rgba(15, 27, 45, 0.20);
+  --brass: #B78A4A;        /* bronze accent (legacy token name kept for reuse) */
+  --brass-deep: #9C7438;   /* deep bronze */
+  --credit: #4F7A5C;       /* money in — clear positive green */
+  --debit: #A15648;        /* money out / overspend — muted terracotta (calm, not alarming) */
+  --sidebar: #0F1B2D;      /* navy sidebar */
+  --sidebar-soft: #A9B2BF; /* cool stone text on navy */
+
+  /* Semantic category accents. Income = sage (calm growth); expense = slate blue. */
+  --income: #6B7F6E;
+  --expense: #5A6F87;
+
+  /* Warning / attention (bronze) and neutral accent (slate blue). */
+  --warn: #9C7438;
+  --accent: #5A6F87;
+
+  --display: 'Montserrat', 'Segoe UI', system-ui, sans-serif;
+  --body: 'Inter', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, 'JetBrains Mono', monospace;
+
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  font-family: var(--body);
+  color: var(--ink);
+  background: var(--canvas);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- numbers are the hero: tabular monospaced figures everywhere ---- */
+.num {
+  font-family: var(--body);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+  letter-spacing: -0.01em;
+}
+.credit { color: var(--credit); }
+.debit { color: var(--debit); }
+.warn { color: var(--brass-deep); }
+
+/* ---------------- App shell ---------------- */
+.app { display: flex; min-height: 100%; }
+
+.sidebar {
+  width: 232px;
+  flex-shrink: 0;
+  background: var(--sidebar);
+  color: var(--sidebar-soft);
+  padding: 26px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+}
+.wordmark {
+  font-family: var(--display);
+  font-size: 22px;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 0 10px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.wordmark .doric-mark { flex-shrink: 0; }
+.wordmark small {
+  font-family: var(--display);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--warm-sand);
+  align-self: center;
+}
+.nav-section {
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--warm-sand);
+  padding: 18px 10px 6px;
+  margin-top: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+}
+.nav-link {
+  display: block;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  color: var(--sidebar-soft);
+  text-decoration: none;
+  font-weight: 500;
+  border-left: 2px solid transparent;
+}
+.nav-link:hover { background: rgba(255,255,255,0.05); color: #fff; }
+.nav-link.active {
+  background: rgba(183, 138, 74, 0.20);
+  color: #fff;
+  font-weight: 700;
+  border-left: 3px solid var(--bronze);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.main { flex: 1; min-width: 0; padding: 32px 40px 80px; max-width: 1140px; }
+
+/* ---------------- Top-right user menu ---------------- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  margin: -8px -40px 14px;
+  padding: 8px 40px;
+  background: var(--canvas);
+}
+.topbar-greeting {
+  font-size: 14px;
+  color: var(--muted);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topbar-greeting strong { color: var(--ink); font-weight: 600; }
+.topbar-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+.topbar-version { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.usermenu { position: relative; }
+.usermenu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 6px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  max-width: 240px;
+}
+.usermenu-trigger:hover { border-color: var(--brass); background: var(--surface-alt); }
+.usermenu-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usermenu-caret { color: var(--muted); font-size: 11px; }
+.usermenu-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--sidebar);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.usermenu-avatar.lg { width: 38px; height: 38px; font-size: 14px; }
+
+.usermenu-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 248px;
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(20, 22, 18, 0.18);
+  padding: 6px;
+  z-index: 40;
+}
+.usermenu-head { display: flex; align-items: center; gap: 10px; padding: 8px 10px 10px; }
+.usermenu-headname { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usermenu-headmail { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usermenu-section {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 8px 10px 4px;
+}
+.usermenu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.usermenu-item:hover { background: var(--surface-alt); }
+.usermenu-item.is-active { font-weight: 600; }
+.usermenu-item.danger { color: var(--debit); }
+.usermenu-itemlabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usermenu-check { width: 14px; flex-shrink: 0; color: var(--brass-deep); }
+.usermenu-role {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+.usermenu-divider { height: 1px; background: var(--hairline); margin: 6px 4px; }
+
+/* ---------------- Headings ---------------- */
+/* Top-align so the action button stays put regardless of how many lines the
+   description wraps to. The button row gets a small nudge so it lines up with
+   the title rather than the eyebrow above it. */
+.page-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
+.page-head > .head-actions, .page-head > button { flex-shrink: 0; margin-top: 22px; }
+/* Primary "Add" buttons share one width across every page so they don't resize
+   as you move between pages. */
+.head-add { min-width: 152px; }
+h1.title {
+  font-family: var(--display);
+  font-weight: 700;
+  font-size: 28px;
+  margin: 0;
+  letter-spacing: -0.015em;
+}
+.subtitle { color: var(--muted); margin: 4px 0 0; font-size: 13px; }
+h2.section {
+  font-family: var(--display);
+  font-weight: 500;
+  font-size: 19px;
+  margin: 32px 0 12px;
+}
+.eyebrow {
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--bronze-deep);
+  margin-bottom: 6px;
+}
+
+/* ---------------- Cards ---------------- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+}
+
+/* ---- Standardized kind-accented card (income / expense), shared by the
+   Budgets and Categories screens so they look identical. ---- */
+.kindcard { padding: 0; overflow: hidden; border-left-width: 3px; }
+.kindcard.income { border-left-color: var(--income); }
+.kindcard.expense { border-left-color: var(--expense); }
+.kindcard-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  padding: 10px 12px 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.kindcard-head .title { font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.kindcard.income > .kindcard-head { background: color-mix(in srgb, var(--income) 15%, var(--surface)); }
+.kindcard.expense > .kindcard-head { background: color-mix(in srgb, var(--expense) 15%, var(--surface)); }
+
+/* Section heading with an inline accent dot + an optional action on the right. */
+.section-head { display: flex; justify-content: space-between; align-items: center; margin: 32px 0 12px; }
+.section-head h2.section { margin: 0; display: flex; align-items: center; gap: 9px; }
+.section-head .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.section-head.income h2.section, .section-head.income .dot { color: var(--income); }
+.section-head.income .dot { background: var(--income); }
+.section-head.expense h2.section { color: var(--expense); }
+.section-head.expense .dot { background: var(--expense); }
+
+.grid { display: grid; gap: 16px; }
+.grid-3 { grid-template-columns: repeat(3, 1fr); }
+.grid-4 { grid-template-columns: repeat(4, 1fr); }
+.grid-2 { grid-template-columns: repeat(2, 1fr); }
+/* Two columns where the first gets more room (e.g. a URL beside a short field). */
+.grid-2-wide { grid-template-columns: 2fr 1fr; }
+
+/* URL input + inline action button share one bottom edge; the button matches the
+   input's natural height so the whole Online access row lines up cleanly. */
+.url-row { align-items: stretch; }
+.url-row > button { flex-shrink: 0; padding-top: 0; padding-bottom: 0; }
+
+.stat .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+.stat .value { font-family: var(--body); font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; margin-top: 6px; letter-spacing: -0.02em; }
+.stat .value.small { font-size: 22px; }
+
+/* hero net worth */
+.hero {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 22px 24px 8px;
+}
+.hero-value { font-family: var(--body); font-variant-numeric: tabular-nums; font-size: 44px; font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; }
+.hero-delta { font-family: var(--body); font-variant-numeric: tabular-nums; font-weight: 600; font-size: 13px; margin-left: 12px; }
+
+/* ---------------- Ledger tables ---------------- */
+table.ledger { width: 100%; border-collapse: collapse; }
+table.ledger th {
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hairline-strong);
+}
+table.ledger th.r, table.ledger td.r { text-align: right; }
+table.ledger td { padding: 9px 12px; border-bottom: 1px solid var(--hairline); }
+/* Transaction rows can be tall (merchant has a description line); top-align all
+   cells so the date/amount/etc. line up with the merchant instead of centering. */
+table.ledger tbody tr.txn-row > td { vertical-align: top; }
+/* Zebra: white rows alternate with a clearly visible cool-grey tint. */
+table.ledger tbody tr:nth-child(odd) { background: var(--surface); }
+table.ledger tbody tr:nth-child(even) { background: color-mix(in srgb, var(--ink) 12%, var(--surface)); }
+table.ledger tbody tr.clickable { cursor: pointer; }
+table.ledger tbody tr.clickable:hover { background: color-mix(in srgb, var(--brass) 26%, var(--surface)); }
+/* Selected row: dark fill with readable light content. */
+table.ledger tbody tr.sub-selected > td { background: var(--ink); color: #f4f4f6; }
+table.ledger tbody tr.sub-selected.clickable:hover > td { background: var(--ink); }
+table.ledger tbody tr.sub-selected .muted { color: #b9bdc9; }
+table.ledger tbody tr.sub-selected .tag,
+table.ledger tbody tr.sub-selected button.ghost { color: #f4f4f6; border-color: rgba(255,255,255,0.45); }
+.money { font-family: var(--body); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+
+/* ---------------- Forms & buttons ---------------- */
+label.field { display: block; margin-bottom: 12px; }
+label.field > span { display: block; font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; font-weight: 500; }
+input, select, textarea {
+  width: 100%;
+  font-family: var(--body);
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+}
+input.num-input { font-family: var(--mono); }
+/* Example/hint text in fields — lighter & italic so it never reads as a real value. */
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.55; font-style: italic; }
+input:focus, select:focus, textarea:focus { outline: 2px solid var(--brass); outline-offset: -1px; border-color: var(--brass); }
+
+button {
+  font-family: var(--body);
+  font-weight: 600;
+  font-size: 13px;
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--navy);
+  background: var(--navy);
+  color: #fff;
+  cursor: pointer;
+}
+button:hover { background: #1B2C44; border-color: #1B2C44; }
+button.ghost { background: transparent; color: var(--ink); border-color: var(--hairline-strong); }
+button.ghost:hover { background: rgba(0,0,0,0.04); }
+button.brass { background: var(--brass); border-color: var(--brass); }
+button.brass:hover { background: var(--brass-deep); }
+button.danger { background: transparent; color: var(--debit); border-color: transparent; padding: 4px 8px; }
+button.danger:hover { background: rgba(162,59,45,0.08); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---- Account list: group cards with compact account rows ---- */
+.account-groups { display: flex; flex-direction: column; gap: 18px; }
+.account-group-card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+.account-group-header {
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 12px;
+  padding: 12px 16px;
+  background: var(--surface-alt);
+  border-bottom: 1px solid var(--hairline);
+}
+.account-rows { display: flex; flex-direction: column; }
+.account-row-card {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1.1fr) auto;
+  gap: 14px; align-items: center;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.account-row-card:last-child { border-bottom: none; }
+.account-row-main { min-width: 0; }
+.account-row-name { font-weight: 600; }
+/* Whole row navigates to the account detail; inner controls stopPropagation. */
+.account-row-card.clickable { cursor: pointer; }
+.account-row-card.clickable:hover { background: color-mix(in srgb, var(--brass) 14%, var(--surface)); }
+
+/* ---- Tabs (account detail) ---- */
+/* Prominent back-to-list link on detail pages. */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+  padding: 7px 14px 7px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.back-link:hover { background: var(--surface-alt); border-color: var(--brass); color: var(--ink); }
+.back-link-arrow { font-size: 22px; line-height: 1; font-weight: 700; color: var(--brass-deep); margin-top: -1px; }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--hairline-strong); margin-bottom: 18px; flex-wrap: wrap; }
+.tab {
+  background: transparent; color: var(--muted);
+  border: none; border-bottom: 2px solid transparent; border-radius: 0;
+  padding: 8px 14px; font-weight: 600; margin-bottom: -1px;
+}
+.tab:hover { background: transparent; color: var(--ink); }
+.tab.active { color: var(--ink); border-bottom-color: var(--brass); }
+
+/* ---- Read-only detail / fact list ---- */
+.detail-list { display: grid; gap: 0; margin: 0; }
+.detail-list .detail-row { display: grid; grid-template-columns: 200px 1fr; gap: 16px; padding: 8px 0; border-bottom: 1px solid var(--hairline); }
+.detail-list .detail-row:last-child { border-bottom: none; }
+.detail-list dt { color: var(--muted); font-size: 13px; }
+.detail-list dd { margin: 0; }
+.account-row-sub { margin-top: 3px; margin-left: 30px; }
+.account-row-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; font-size: 13px; }
+.account-row-balance { text-align: right; white-space: nowrap; }
+
+/* ---- Categories & Tags management workspace ---- */
+.management-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 14px 16px; }
+.management-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.management-head h2 { font-family: var(--display); font-weight: 600; font-size: 16px; margin: 0; display: flex; align-items: center; gap: 9px; }
+.management-head .desc { color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+/* Tag cards: shaped like a luggage tag, click anywhere to open the tag. */
+.tag-card {
+  position: relative;
+  display: inline-flex; flex-direction: column; justify-content: center;
+  min-width: 118px; max-width: 260px;
+  padding: 9px 18px 9px 28px;
+  background: color-mix(in srgb, var(--brass) 22%, var(--surface));
+  color: var(--ink);
+  border: none;
+  border-radius: 0 8px 8px 0;
+  clip-path: polygon(16px 0, 100% 0, 100% 100%, 16px 100%, 0 50%);
+  cursor: pointer; text-align: left; font-family: var(--body);
+}
+.tag-card:hover { background: color-mix(in srgb, var(--brass) 38%, var(--surface)); }
+.tag-card::before { content: ''; position: absolute; left: 9px; top: 50%; transform: translateY(-50%); width: 7px; height: 7px; border-radius: 50%; background: var(--canvas); }
+.tag-card .tc-name { font-weight: 600; font-size: 14px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-card .tc-count { font-size: 11px; color: var(--brass-deep); margin-top: 2px; }
+.tag-card.archived { background: var(--surface-alt); color: var(--muted); }
+.tag-card.archived .tc-count { color: var(--muted); }
+/* Distinct "create" tag: dark fill so it reads as the action, not a data tag. */
+.tag-card.create { background: var(--navy); color: #fff; }
+.tag-card.create:hover { background: #1B2C44; }
+.tag-card.create .tc-name { color: #fff; }
+.tag-card.create .tc-count { color: rgba(255,255,255,0.65); }
+/* Auto-managed tags (properties, subscriptions, vehicles): white fill. */
+.tag-card.auto { background: #fff; color: var(--ink); }
+.tag-card.auto:hover { background: color-mix(in srgb, var(--brass) 12%, #fff); }
+.tag-card.auto .tc-name { color: var(--ink); }
+.tag-card.auto .tc-count { color: var(--brass-deep); }
+/* Inline name input shown while creating a tag. */
+.tag-create-input { width: 200px; }
+
+/* Major Income / Expenses section cards */
+.category-section-card { background: var(--surface); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
+.category-section-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.category-section-head .name { display: flex; align-items: center; gap: 9px; font-family: var(--display); font-weight: 600; font-size: 17px; }
+.category-section-head .count { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.category-section-head .dot, .auto-managed-section .dot, .management-head .dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+/* Group card — lighter than the budget kindcard */
+.category-group-card { border: 1px solid var(--hairline); border-left-width: 3px; border-radius: var(--radius); background: var(--surface); overflow: hidden; }
+.category-group-card.income { border-left-color: var(--income); }
+.category-group-card.expense { border-left-color: var(--expense); }
+.category-group-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 7px 8px 7px 10px; background: var(--surface-alt); border-bottom: 1px solid var(--hairline); }
+.category-group-header .grp-name { font-weight: 600; font-size: 14px; cursor: text; }
+.category-group-header .grp-del { color: var(--muted); }
+.category-group-header .grp-del:hover { color: var(--debit); background: rgba(154,91,79,0.10); }
+
+/* Compact, quiet item rows (no zebra) */
+.category-item-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 12px; border-bottom: 1px solid var(--hairline); }
+.category-item-row:last-child { border-bottom: none; }
+.category-item-row .item-name { cursor: text; }
+
+/* Subtle drag handles: faint at rest, clear on row hover/focus */
+.drag-handle { cursor: grab; color: var(--muted); opacity: 0.35; user-select: none; transition: opacity 0.1s; }
+.drag-handle:hover, .category-group-header:hover .drag-handle, .category-item-row:hover .drag-handle { opacity: 0.9; }
+
+/* Automatic (system-managed) — visually secondary */
+.auto-managed-section .section, .auto-managed-section h2 { color: var(--muted); }
+.auto-managed-card { border: 1px dashed var(--hairline-strong); border-radius: var(--radius); background: var(--surface-alt); padding: 9px 12px; }
+.auto-managed-card .auto-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.auto-managed-card .auto-name { font-weight: 600; font-size: 14px; }
+.auto-managed-card .auto-item { padding: 4px 0; border-top: 1px solid var(--hairline); font-size: 13px; color: var(--ink-soft); }
+
+.tag {
+  display: inline-block;
+  font-family: var(--display);
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  background: transparent;   /* a tag is a badge — never inherit the navy <button> fill */
+  color: var(--ink-soft);
+}
+/* When a tag is a clickable button, keep it readable on hover (don't go navy). */
+button.tag:hover { background: color-mix(in srgb, var(--brass) 16%, var(--surface)); }
+.tag.receipt { border-color: var(--brass); color: var(--brass-deep); }
+
+/* progress bars for budget */
+.progress { height: 24px; background: #e6e4dd; border-radius: 999px; overflow: hidden; }
+.progress > span { display: block; height: 100%; background: var(--credit); }
+.progress.over > span { background: var(--debit); }
+
+/* modal */
+.scrim { position: fixed; inset: 0; background: rgba(20,22,18,0.45); display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; z-index: 50; overflow: auto; }
+.modal { background: var(--surface); border-radius: 8px; width: 100%; max-width: 760px; padding: 24px 26px; box-shadow: 0 18px 50px rgba(0,0,0,0.3); }
+.modal-head { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; }
+.modal-subtitle { font-family: var(--mono); font-size: 12px; color: var(--muted); margin-top: 4px; letter-spacing: 0.01em; }
+
+/* ---- Editor form sections: grouped cards inside editor modals ---- */
+.form-section {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 13px 16px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+.form-section-head { margin-bottom: 10px; }
+.form-section-title { font-family: var(--display); font-weight: 600; font-size: 15px; margin: 0; letter-spacing: -0.01em; }
+.form-section-desc { color: var(--muted); font-size: 12px; margin-top: 2px; line-height: 1.4; }
+/* Secondary group: lighter, recedes against the primary cards. */
+.form-section.subtle { background: var(--surface-alt); border-style: dashed; }
+.form-section.subtle .form-section-title { font-weight: 500; color: var(--ink-soft); }
+/* Tighter field rhythm inside the editor cards (without affecting other forms). */
+.form-section label.field { margin-bottom: 10px; }
+/* The last grid/field inside a section shouldn't add trailing margin under it. */
+.form-section > .grid:last-child, .form-section > label.field:last-child { margin-bottom: 0; }
+
+/* Liability / account-treatment shown as a selectable checkbox card. */
+.check-card {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 9px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.check-card:hover { border-color: var(--brass); }
+.check-card.on { border-color: var(--brass); background: color-mix(in srgb, var(--brass) 6%, var(--surface)); }
+.check-card input { width: auto; margin-top: 2px; flex-shrink: 0; }
+.check-card .check-body { display: flex; flex-direction: column; }
+.check-card .check-title { font-weight: 600; font-size: 13px; color: var(--ink); }
+.check-card .check-help { color: var(--muted); font-size: 12px; margin-top: 1px; }
+
+/* Distinct "add snapshot" row. Inputs and the button align on a single baseline. */
+.snap-add {
+  display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+.snap-add label.field { margin-bottom: 0; }
+.snap-add > button { height: 37px; padding-top: 0; padding-bottom: 0; }
+
+/* Anchor badge keeps normal casing (not upper-cased like other tags) and reads as a hint. */
+.tag.anchor { text-transform: none; letter-spacing: 0.02em; cursor: help; border-color: var(--brass); color: var(--brass-deep); }
+
+.empty { color: var(--muted); padding: 28px; text-align: center; border: 1px dashed var(--hairline-strong); border-radius: var(--radius); }
+.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.muted { color: var(--muted); }
+.right { text-align: right; }
+
+/* AI markdown output */
+.ai-output { line-height: 1.6; }
+.ai-output h1, .ai-output h2, .ai-output h3 { font-family: var(--display); font-weight: 600; margin: 18px 0 8px; }
+.ai-output h2 { font-size: 18px; }
+.ai-output h3 { font-size: 15px; }
+.ai-output ul, .ai-output ol { padding-left: 22px; }
+.ai-output li { margin: 4px 0; }
+.ai-output code { font-family: var(--mono); background: var(--surface-alt); padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+.ai-output strong { font-weight: 600; }
+.ai-output table { border-collapse: collapse; margin: 10px 0; }
+.ai-output th, .ai-output td { border: 1px solid var(--hairline); padding: 6px 10px; text-align: left; }
+
+.banner { background: #fbf3e3; border: 1px solid var(--brass); color: var(--brass-deep); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; margin-bottom: 18px; }
+.error { background: #fbeae7; border: 1px solid var(--debit); color: var(--debit); padding: 10px 14px; border-radius: var(--radius); font-size: 13px; }
+
+@media (max-width: 860px) {
+  .app { flex-direction: column; }
+  .sidebar { width: auto; height: auto; position: static; flex-direction: row; flex-wrap: wrap; align-items: center; }
+  .nav-section { display: none; }
+  .main { padding: 22px; }
+  .grid-4, .grid-3, .grid-2, .grid-2-wide { grid-template-columns: 1fr; }
+  /* Account rows stack: identity, then metadata, then balance — balance stays left-readable. */
+  .account-row-card { grid-template-columns: 1fr; gap: 6px; }
+  .account-row-balance { text-align: left; }
+  .account-row-sub { margin-left: 0; }
+  .account-group-header { flex-wrap: wrap; }
+  .detail-list .detail-row { grid-template-columns: 1fr; gap: 2px; }
+}

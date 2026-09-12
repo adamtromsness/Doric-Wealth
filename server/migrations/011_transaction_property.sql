@@ -1,0 +1,3 @@
+-- Historically added transactions.property_id to tag a transaction to a property.
+-- Superseded by the many-to-many line_tags table (migration 019) and dropped in
+-- migration 020, so this migration is intentionally a no-op now.
