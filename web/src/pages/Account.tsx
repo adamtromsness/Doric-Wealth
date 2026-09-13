@@ -6,13 +6,14 @@ import { Field } from '../components/ui';
 // My Profile: tabbed personal record (same shape as the account/vehicle/property
 // detail pages). The 1:1 sections share one form + a single top "Save Changes"
 // button; Dependants is a sub-collection with its own inline add/edit/delete.
-type Tab = 'profile' | 'occupation' | 'retirement' | 'dependants' | 'emergency';
+type Tab = 'profile' | 'occupation' | 'retirement' | 'dependants' | 'emergency' | 'security';
 const TABS: { key: Tab; label: string }[] = [
   { key: 'profile', label: 'Profile' },
   { key: 'occupation', label: 'Occupation' },
   { key: 'retirement', label: 'Retirement' },
   { key: 'dependants', label: 'Dependants' },
   { key: 'emergency', label: 'Emergency' },
+  { key: 'security', label: 'Security' },
 ];
 
 const EMPLOYMENT: readonly (readonly [string, string])[] = [
@@ -123,7 +124,7 @@ export default function Account() {
                 <button onClick={depSave} disabled={depBusy}>{depBusy ? 'Saving…' : 'Save Changes'}</button>
               </>
             )
-          ) : (
+          ) : tab === 'security' ? null : (
             <>
               <button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
             </>
@@ -239,6 +240,8 @@ export default function Account() {
         </div>
       )}
 
+      {tab === 'security' && <SecuritySection />}
+
       {tab === 'emergency' && (
         <div className="card">
           <div className="label" style={{ marginBottom: 10 }}>Emergency Contact</div>
@@ -253,6 +256,90 @@ export default function Account() {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+// Security tab: change the password, and end sessions on other devices. Both live
+// here rather than in the shared profile form because each has its own action and
+// neither should ride the page's single "Save Changes" button.
+function SecuritySection() {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [confirmNext, setConfirmNext] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+
+  const [outBusy, setOutBusy] = useState(false);
+  const [outErr, setOutErr] = useState('');
+  const [outNote, setOutNote] = useState('');
+
+  const sessionsEnded = (n: number) =>
+    n === 0 ? 'No other sessions were signed in.' : `Signed out ${n} other session${n === 1 ? '' : 's'}.`;
+
+  const submit = async () => {
+    setErr(''); setNote('');
+    if (!current || !next) { setErr('Enter your current and new password.'); return; }
+    if (next !== confirmNext) { setErr('The new passwords do not match.'); return; }
+    if (next.length < 8) { setErr('Password must be at least 8 characters.'); return; }
+    setBusy(true);
+    try {
+      const r = await api.put<{ ended: number }>('/auth/password', { current_password: current, new_password: next });
+      setCurrent(''); setNext(''); setConfirmNext('');
+      setNote(`Password changed. ${sessionsEnded(r.ended)}`);
+    } catch (e: any) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const signOutEverywhere = async () => {
+    if (!window.confirm('Sign out of every other device? You will stay signed in here.')) return;
+    setOutErr(''); setOutNote(''); setOutBusy(true);
+    try {
+      const r = await api.post<{ ended: number }>('/auth/logout-all', {});
+      setOutNote(sessionsEnded(r.ended));
+    } catch (e: any) { setOutErr(e.message); }
+    finally { setOutBusy(false); }
+  };
+
+  return (
+    <>
+      <div className="card">
+        <div className="label" style={{ marginBottom: 10 }}>Change Password</div>
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          Changing your password signs out every other device, so anyone using your account elsewhere is locked out.
+        </p>
+        {err && <div className="error" style={{ marginBottom: 12 }}>{err}</div>}
+        {note && <div className="banner" style={{ marginBottom: 12 }}>{note}</div>}
+        <Field label="Current Password">
+          <input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        </Field>
+        <div className="grid grid-2">
+          <Field label="New Password">
+            <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} placeholder="at least 8 characters" />
+          </Field>
+          <Field label="Confirm New Password">
+            <input type="password" autoComplete="new-password" value={confirmNext} onChange={(e) => setConfirmNext(e.target.value)} />
+          </Field>
+        </div>
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button onClick={submit} disabled={busy}>{busy ? 'Changing…' : 'Change Password'}</button>
+        </div>
+      </div>
+
+      <div className="card" style={{ marginTop: 16 }}>
+        <div className="label" style={{ marginBottom: 10 }}>Signed-In Devices</div>
+        <p className="muted" style={{ fontSize: 13, marginTop: 0 }}>
+          End every other session without changing your password. Useful after using a shared or lost device.
+        </p>
+        {outErr && <div className="error" style={{ marginBottom: 12 }}>{outErr}</div>}
+        {outNote && <div className="banner" style={{ marginBottom: 12 }}>{outNote}</div>}
+        <div className="row" style={{ justifyContent: 'flex-end' }}>
+          <button className="ghost" onClick={signOutEverywhere} disabled={outBusy}>
+            {outBusy ? 'Signing Out…' : 'Sign Out Everywhere'}
+          </button>
+        </div>
+      </div>
     </>
   );
 }

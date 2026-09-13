@@ -168,3 +168,121 @@ describe('Account page', () => {
     });
   });
 });
+
+describe('Account security tab', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (api.get as any).mockResolvedValue(profileFixture);
+    (api.put as any).mockResolvedValue({ ended: 0 });
+    (api.post as any).mockResolvedValue({ ended: 0 });
+  });
+
+  const openSecurity = async () => {
+    renderPage();
+    await screen.findByRole('button', { name: 'Security' });
+    await userEvent.click(screen.getByRole('button', { name: 'Security' }));
+  };
+
+  it('hides the shared Save Changes button on this tab', async () => {
+    await openSecurity();
+    expect(screen.getByText('Change Password', { selector: '.label' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Save Changes' })).toBeNull();
+  });
+
+  it('changes the password and reports the sessions it ended', async () => {
+    (api.put as any).mockResolvedValue({ ended: 2 });
+    await openSecurity();
+    await userEvent.type(screen.getByLabelText('Current Password'), 'supersecret');
+    await userEvent.type(screen.getByLabelText('New Password'), 'brand-new-secret');
+    await userEvent.type(screen.getByLabelText('Confirm New Password'), 'brand-new-secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+
+    await waitFor(() => expect(api.put).toHaveBeenCalledWith('/auth/password', {
+      current_password: 'supersecret', new_password: 'brand-new-secret',
+    }));
+    expect(await screen.findByText(/Password changed\. Signed out 2 other sessions\./)).toBeInTheDocument();
+    // The fields are cleared so the new password isn't left sitting in the DOM.
+    expect(screen.getByLabelText('Current Password')).toHaveValue('');
+    expect(screen.getByLabelText('New Password')).toHaveValue('');
+  });
+
+  it('uses the singular when only one session ended', async () => {
+    (api.put as any).mockResolvedValue({ ended: 1 });
+    await openSecurity();
+    await userEvent.type(screen.getByLabelText('Current Password'), 'supersecret');
+    await userEvent.type(screen.getByLabelText('New Password'), 'brand-new-secret');
+    await userEvent.type(screen.getByLabelText('Confirm New Password'), 'brand-new-secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(await screen.findByText(/Signed out 1 other session\./)).toBeInTheDocument();
+  });
+
+  it('says so when there were no other sessions', async () => {
+    await openSecurity();
+    await userEvent.type(screen.getByLabelText('Current Password'), 'supersecret');
+    await userEvent.type(screen.getByLabelText('New Password'), 'brand-new-secret');
+    await userEvent.type(screen.getByLabelText('Confirm New Password'), 'brand-new-secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(await screen.findByText(/No other sessions were signed in\./)).toBeInTheDocument();
+  });
+
+  it('requires both passwords before calling the API', async () => {
+    await openSecurity();
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(await screen.findByText('Enter your current and new password.')).toBeInTheDocument();
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
+  it('catches a mismatched confirmation before calling the API', async () => {
+    await openSecurity();
+    await userEvent.type(screen.getByLabelText('Current Password'), 'supersecret');
+    await userEvent.type(screen.getByLabelText('New Password'), 'brand-new-secret');
+    await userEvent.type(screen.getByLabelText('Confirm New Password'), 'different-secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(await screen.findByText('The new passwords do not match.')).toBeInTheDocument();
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
+  it('catches a too-short password before calling the API', async () => {
+    await openSecurity();
+    await userEvent.type(screen.getByLabelText('Current Password'), 'supersecret');
+    await userEvent.type(screen.getByLabelText('New Password'), 'short');
+    await userEvent.type(screen.getByLabelText('Confirm New Password'), 'short');
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(await screen.findByText('Password must be at least 8 characters.')).toBeInTheDocument();
+    expect(api.put).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a rejected current password from the server', async () => {
+    (api.put as any).mockRejectedValue(new Error('Current password is incorrect.'));
+    await openSecurity();
+    await userEvent.type(screen.getByLabelText('Current Password'), 'wrong');
+    await userEvent.type(screen.getByLabelText('New Password'), 'brand-new-secret');
+    await userEvent.type(screen.getByLabelText('Confirm New Password'), 'brand-new-secret');
+    await userEvent.click(screen.getByRole('button', { name: 'Change Password' }));
+    expect(await screen.findByText('Current password is incorrect.')).toBeInTheDocument();
+  });
+
+  it('signs out everywhere after confirming', async () => {
+    (api.post as any).mockResolvedValue({ ended: 3 });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    await openSecurity();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign Out Everywhere' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/auth/logout-all', {}));
+    expect(await screen.findByText(/Signed out 3 other sessions\./)).toBeInTheDocument();
+  });
+
+  it('does nothing when the sign-out confirm is declined', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(false);
+    await openSecurity();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign Out Everywhere' }));
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a sign-out failure', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    (api.post as any).mockRejectedValue(new Error('logout boom'));
+    await openSecurity();
+    await userEvent.click(screen.getByRole('button', { name: 'Sign Out Everywhere' }));
+    expect(await screen.findByText('logout boom')).toBeInTheDocument();
+  });
+});
