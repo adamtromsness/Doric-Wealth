@@ -4,9 +4,11 @@ import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { config } from './config.js';
+import { config, assertProductionConfig } from './config.js';
 import { HttpError } from './http.js';
 import { pool, assertSafeAppRole } from './db.js';
+import { securityHeaders } from './securityHeaders.js';
+import { deleteExpiredSessions } from './auth.js';
 import { syncAllManagedCategoriesSafe } from './managedCategories.js';
 import { authContext, requireAuth, tenantDb } from './tenant.js';
 
@@ -40,6 +42,9 @@ import { todos } from './routes/todos.js';
 const app = express();
 // Behind an ALB/reverse proxy, trust the first hop so Secure cookies + req.protocol work.
 if (config.trustProxy) app.set('trust proxy', 1);
+// Security headers first, so every response carries them — including error
+// responses and the SPA's index.html served from web/dist below.
+app.use(securityHeaders);
 // CORS must allow credentials so the session cookie is sent cross-origin (dev).
 app.use(cors(config.webOrigin ? { origin: config.webOrigin, credentials: true } : { origin: true, credentials: true }));
 // Liveness/readiness probes stay open (no auth, no token) — registered before the
@@ -154,6 +159,7 @@ if (process.env.SERVER_NO_LISTEN !== '1') {
   // Fail closed BEFORE binding: never serve requests with a DB role that can bypass
   // row-level security in production (see assertSafeAppRole).
   try {
+    assertProductionConfig();
     await assertSafeAppRole();
   } catch (e: any) {
     console.error(e?.message ?? e);
@@ -169,6 +175,15 @@ if (process.env.SERVER_NO_LISTEN !== '1') {
     }
     // Backfill/refresh the auto-managed categories on boot (every book).
     syncAllManagedCategoriesSafe();
+
+    // Sweep expired sessions on boot and daily thereafter. They were already
+    // refused at read time, but nothing deleted them, so the table grew forever
+    // and kept stale token hashes on disk.
+    const sweepSessions = () => {
+      deleteExpiredSessions().catch((e) => console.error('Expired-session sweep failed:', e?.message ?? e));
+    };
+    sweepSessions();
+    setInterval(sweepSessions, 24 * 60 * 60 * 1000).unref();
 
     // Check the SimpleFIN auto-import schedule periodically. The check is cheap and only
     // syncs connections that are actually due for their start-time + frequency (see

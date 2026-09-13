@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { one, query, withTransaction } from '../db.js';
 import { ah, require_, HttpError } from '../http.js';
 import {
-  hashPassword, verifyPassword, createSession, destroySession,
+  hashPassword, verifyPassword, createSession, destroySession, destroyOtherSessions,
   SESSION_COOKIE, sessionCookieOptions,
 } from '../auth.js';
 import { requireAuth, mePayload } from '../tenant.js';
@@ -104,6 +104,17 @@ auth.post(
     if (req.sessionToken) await destroySession(req.sessionToken);
     res.clearCookie(SESSION_COOKIE, { ...sessionCookieOptions(), maxAge: undefined });
     res.status(204).end();
+  })
+);
+
+// Sign out everywhere: ends this user's other sessions and keeps the caller's own,
+// so the tab making the request stays usable. The lever to pull after a lost device.
+auth.post(
+  '/logout-all',
+  requireAuth,
+  ah(async (req, res) => {
+    const ended = await destroyOtherSessions(req.user!.id, req.sessionToken);
+    res.json({ ended });
   })
 );
 

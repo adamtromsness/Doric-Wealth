@@ -51,7 +51,7 @@ Set on the ECS task definition. The image already defaults `NODE_ENV=production`
 | `WEB_ORIGIN` | optional | only needed if the SPA is served from a different origin |
 | `ANTHROPIC_API_KEY` | optional | AI features |
 | `RENTCAST_API_KEY` | optional | property valuations |
-| `APP_SECRET_KEY` | required if using linked accounts | encrypts stored SimpleFIN access credentials at rest. Set to a strong random string (e.g. `openssl rand -hex 32`). Without it, the server falls back to an insecure dev key — never rely on that in production. Changing it later invalidates existing connections (they must be re-linked). |
+| `APP_SECRET_KEY` | **required** | encrypts stored SimpleFIN access credentials at rest. At least 32 characters: `openssl rand -base64 32`. In production the server **refuses to start** if it is missing, still the development default, or shorter than 32 characters. Changing it later invalidates existing connections (they must be re-linked). |
 
 TLS terminates at the ALB; the container speaks plain HTTP on :4000. `trust proxy`
 lets Express see the original HTTPS scheme so Secure cookies are honored.
