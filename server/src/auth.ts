@@ -3,7 +3,7 @@
 // helpers. Swap scrypt for argon2 later by reimplementing hash/verifyPassword.
 import crypto from 'node:crypto';
 import type { Request, CookieOptions } from 'express';
-import { one } from './db.js';
+import { one, query } from './db.js';
 import { config } from './config.js';
 
 const SCRYPT_KEYLEN = 64;
@@ -47,6 +47,29 @@ export async function createSession(userId: number, activeBookId: number | null)
 
 export async function destroySession(token: string): Promise<void> {
   await one(`DELETE FROM sessions WHERE token_hash = $1 RETURNING id`, [hashToken(token)]);
+}
+
+// Revoke every session for a user, optionally sparing the one making the request
+// so "sign out everywhere" doesn't log the caller out of the tab they're using.
+// Returns how many sessions were ended. This is the lever a user needs after a
+// stolen laptop or a shared password, and the hook a future password-change route
+// should call so a changed password actually evicts an attacker.
+export async function destroyOtherSessions(userId: number, keepToken?: string): Promise<number> {
+  const rows = keepToken
+    ? await query<{ id: number }>(
+        `DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2 RETURNING id`,
+        [userId, hashToken(keepToken)]
+      )
+    : await query<{ id: number }>(`DELETE FROM sessions WHERE user_id = $1 RETURNING id`, [userId]);
+  return rows.length;
+}
+
+// Expired sessions are already refused at read time, but nothing deleted them, so
+// the table grew forever and kept stale token hashes on disk. Swept periodically
+// from the server's boot timer.
+export async function deleteExpiredSessions(): Promise<number> {
+  const rows = await query<{ id: number }>(`DELETE FROM sessions WHERE expires_at < now() RETURNING id`);
+  return rows.length;
 }
 
 // A short, human-shareable, URL-safe invite code.

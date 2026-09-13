@@ -8,6 +8,9 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 // Matches docker-compose.yml, which publishes the Postgres container on host port 5433.
 const DEFAULT_DB = 'postgresql://finance:finance@localhost:5433/finance';
+// Development-only stand-in for APP_SECRET_KEY. Exported so the production boot
+// check can reject it by identity rather than by guessing at its shape.
+export const DEV_SECRET_KEY = 'dev-insecure-app-secret-change-me';
 
 export const config = {
   // Privileged connection (owner/admin): used for migrations, bootstrap, and the
@@ -46,8 +49,32 @@ export const config = {
   // access URL) at rest. REQUIRED in production once a connection is created. In
   // development we fall back to an insecure constant so the demo flow works without
   // setup — never rely on this default for real credentials.
-  secretKey: process.env.APP_SECRET_KEY ?? (process.env.NODE_ENV === 'production' ? '' : 'dev-insecure-app-secret-change-me'),
+  secretKey: process.env.APP_SECRET_KEY ?? (process.env.NODE_ENV === 'production' ? '' : DEV_SECRET_KEY),
 };
+
+// Minimum entropy we accept for APP_SECRET_KEY in production. 32 characters is a
+// 256-bit key when generated with `openssl rand -base64 32`.
+const MIN_SECRET_KEY_LENGTH = 32;
+
+// Fail closed before serving, next to assertSafeAppRole. Without this, a missing
+// APP_SECRET_KEY surfaces only when someone first links a SimpleFIN connection —
+// long after deploy, as a 500 on an unrelated screen. Worse, the development
+// fallback is a constant published in this repository, so shipping it would leave
+// every stored third-party credential decryptable by anyone reading the source.
+export function assertProductionConfig(): void {
+  if (process.env.NODE_ENV !== 'production') return;
+  const problems: string[] = [];
+  if (!config.secretKey) {
+    problems.push('APP_SECRET_KEY is not set. It encrypts stored third-party credentials at rest.');
+  } else if (config.secretKey === DEV_SECRET_KEY) {
+    problems.push('APP_SECRET_KEY is still the development default, which is public in this repository.');
+  } else if (config.secretKey.length < MIN_SECRET_KEY_LENGTH) {
+    problems.push(`APP_SECRET_KEY is shorter than ${MIN_SECRET_KEY_LENGTH} characters. Generate one with: openssl rand -base64 32`);
+  }
+  if (problems.length) {
+    throw new Error(`Refusing to start:\n  - ${problems.join('\n  - ')}`);
+  }
+}
 
 export const aiConfigured = Boolean(config.anthropicApiKey);
 export const rentcastConfigured = Boolean(config.rentcastApiKey);
