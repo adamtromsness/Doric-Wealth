@@ -11,6 +11,9 @@ import { config } from '../config.js';
 
 export const auth = Router();
 
+// One place for the password rule, so registration and password change can't drift.
+const MIN_PASSWORD_LENGTH = 8;
+
 // Shape the AI-settings response (the raw key is never returned — only a masked hint).
 function aiSettingsPayload(row: { ai_api_key: string | null; ai_model: string | null } | null) {
   const key = row?.ai_api_key?.trim() || '';
@@ -28,6 +31,10 @@ const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 // Throttle credential endpoints to blunt brute-force / enumeration (per IP).
 const loginLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, keyPrefix: 'login:', message: 'Too many login attempts. Please wait a few minutes and try again.' });
 const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, keyPrefix: 'register:', message: 'Too many sign-up attempts. Please wait and try again.' });
+// Changing a password requires presenting the current one, so this route guesses
+// credentials just like login does — rate-limit it even though the caller is
+// already authenticated (a stolen session shouldn't become a password oracle).
+const passwordLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, keyPrefix: 'password:', message: 'Too many password attempts. Please wait a few minutes and try again.' });
 
 // Register a new user, give them a brand-new book they own, and log them in.
 auth.post(
@@ -39,7 +46,7 @@ auth.post(
     const password = String(req.body.password);
     const name = req.body.name ? String(req.body.name).trim() : null;
     if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Enter a valid email address.');
-    if (password.length < 8) throw new HttpError(400, 'Password must be at least 8 characters.');
+    if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
 
     const exists = await one(`SELECT id FROM users WHERE lower(email) = lower($1)`, [email]);
     if (exists) throw new HttpError(409, 'An account with that email already exists.');
@@ -104,6 +111,39 @@ auth.post(
     if (req.sessionToken) await destroySession(req.sessionToken);
     res.clearCookie(SESSION_COOKIE, { ...sessionCookieOptions(), maxAge: undefined });
     res.status(204).end();
+  })
+);
+
+// Change the signed-in user's password. Requires the current password, so a stolen
+// session alone can't lock the real owner out. On success every OTHER session is
+// revoked: changing a password is what a user does when they suspect compromise,
+// and it would be worthless if the attacker's session survived it.
+auth.put(
+  '/password',
+  requireAuth,
+  passwordLimiter,
+  ah(async (req, res) => {
+    require_(req.body, ['current_password', 'new_password']);
+    const current = String(req.body.current_password);
+    const next = String(req.body.new_password);
+    if (next.length < MIN_PASSWORD_LENGTH) {
+      throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    }
+    const user = await one<{ password_hash: string; password_salt: string }>(
+      `SELECT password_hash, password_salt FROM users WHERE id = $1`,
+      [req.user!.id]
+    );
+    if (!user || !verifyPassword(current, user.password_hash, user.password_salt)) {
+      throw new HttpError(401, 'Current password is incorrect.');
+    }
+    if (verifyPassword(next, user.password_hash, user.password_salt)) {
+      throw new HttpError(400, 'The new password must be different from the current one.');
+    }
+    const { hash, salt } = hashPassword(next);
+    await query(`UPDATE users SET password_hash = $2, password_salt = $3 WHERE id = $1`,
+      [req.user!.id, hash, salt]);
+    const ended = await destroyOtherSessions(req.user!.id, req.sessionToken);
+    res.json({ ended });
   })
 );
 
