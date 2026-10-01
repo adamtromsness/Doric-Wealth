@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import OtherAssets from './OtherAssets';
@@ -65,48 +65,14 @@ describe('OtherAssets page', () => {
     expect(navigateMock).toHaveBeenCalledWith('/other-assets/7');
   });
 
-  it('opens the add modal, validates a missing name, then creates and navigates', async () => {
+  it('Add Asset opens the add page instead of a popup', async () => {
     const user = userEvent.setup();
     (api.get as any).mockResolvedValue([]);
     renderPage();
     await screen.findByText(/No other assets yet/);
     await user.click(screen.getByRole('button', { name: 'Add Asset' }));
-    const modal = () => within(document.querySelector('.modal') as HTMLElement);
-    // Save stays disabled until the form is dirty, so a whitespace-only name is
-    // what actually reaches the validation branch.
-    const nameInput = screen.getByPlaceholderText('e.g. Lake cabin boat');
-    await user.type(nameInput, '   ');
-    await user.click(modal().getByRole('button', { name: 'Add Asset' }));
-    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
-    expect(api.post).not.toHaveBeenCalled();
-
-    await user.clear(nameInput);
-    await user.type(nameInput, 'New Boat');
-    await user.click(modal().getByRole('button', { name: 'Add Asset' }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/assets', expect.objectContaining({ name: 'New Boat', asset_type: 'other' })));
-    expect(navigateMock).toHaveBeenCalledWith('/other-assets/99');
-  });
-
-  it('surfaces a save error from the editor', async () => {
-    const user = userEvent.setup();
-    (api.get as any).mockResolvedValue([]);
-    (api.post as any).mockRejectedValue(new Error('save boom'));
-    renderPage();
-    await screen.findByText(/No other assets yet/);
-    await user.click(screen.getByRole('button', { name: 'Add Asset' }));
-    await user.type(screen.getByPlaceholderText('e.g. Lake cabin boat'), 'X');
-    await user.click(within(document.querySelector('.modal') as HTMLElement).getByRole('button', { name: 'Add Asset' }));
-    expect(await screen.findByText('save boom')).toBeInTheDocument();
-  });
-
-  it('closes the add modal without saving', async () => {
-    const user = userEvent.setup();
-    (api.get as any).mockResolvedValue([]);
-    renderPage();
-    await screen.findByText(/No other assets yet/);
-    await user.click(screen.getByRole('button', { name: 'Add Asset' }));
-    await user.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByPlaceholderText('e.g. Lake cabin boat')).toBeNull());
+    expect(navigateMock).toHaveBeenCalledWith('/other-assets/new');
+    expect(document.querySelector('.modal')).toBeNull();
   });
 
   it('renders a purchase-date subtitle when there are no notes', async () => {

@@ -207,4 +207,55 @@ describe('AssetDetail page', () => {
     // Current Value field now visible in the form (label appears in the grid).
     expect(await screen.findAllByText('Current Value')).not.toHaveLength(0);
   });
+
+  describe('Add Asset (new mode)', () => {
+    it('renders the details form on the page, without loading or a popup', async () => {
+      renderAt('new');
+      expect(screen.getByRole('heading', { name: 'Add Asset' })).toBeInTheDocument();
+      expect(screen.getByText('New Asset')).toBeInTheDocument();
+      expect(screen.getByText('What This Asset Tracks')).toBeInTheDocument();
+      expect(document.querySelector('.modal')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Add Asset' })).toBeDisabled();
+      // Properties have their own module, so "Property" isn't offered for a new asset.
+      expect(screen.queryByRole('option', { name: 'Property' })).toBeNull();
+      expect(api.get).not.toHaveBeenCalled();
+    });
+
+    it('validates a blank name', async () => {
+      const user = userEvent.setup();
+      renderAt('new');
+      await user.type(screen.getByPlaceholderText('e.g. Airstream Trailer'), '   ');
+      await user.click(screen.getByRole('button', { name: 'Add Asset' }));
+      expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it('creates the asset with its value and tracking choices, then opens it', async () => {
+      const user = userEvent.setup();
+      (api.post as any).mockResolvedValue({ ...asset, id: 42 });
+      renderAt('new');
+      await user.type(screen.getByPlaceholderText('e.g. Airstream Trailer'), 'Bass Boat');
+      await user.selectOptions(screen.getByRole('combobox'), 'boat');
+      await user.click(screen.getByText('Track value over time'));
+      // The starting value stays editable on create even when value tracking is on.
+      expect(screen.getByText('After saving, record value over time on the Value tab.')).toBeInTheDocument();
+      await user.type(screen.getAllByPlaceholderText('0.00')[0], '12000');
+      await user.click(screen.getByRole('button', { name: 'Add Asset' }));
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith('/assets', expect.objectContaining({
+        name: 'Bass Boat', asset_type: 'boat', value: 12000, tracks_value: true,
+      })));
+      expect(navigateMock).toHaveBeenCalledWith('/other-assets/42');
+    });
+
+    it('surfaces a create error', async () => {
+      const user = userEvent.setup();
+      (api.post as any).mockRejectedValue(new Error('create failed'));
+      renderAt('new');
+      await user.type(screen.getByPlaceholderText('e.g. Airstream Trailer'), 'X');
+      await user.click(screen.getByRole('button', { name: 'Add Asset' }));
+      expect(await screen.findByText('create failed')).toBeInTheDocument();
+      expect(navigateMock).not.toHaveBeenCalled();
+    });
+  });
 });
