@@ -120,9 +120,10 @@ test('POST /custom returns 503 when AI is not configured', async () => {
   config.anthropicApiKey = '';
   try {
     const r = await client.post('/api/analysis/custom', { question: 'anything' });
-    // The error handler masks 5xx bodies to "Internal error", but the 503 status
-    // distinguishes the not-configured path (vs a 500 from a real upstream error).
+    // The 503 status distinguishes the not-configured path (vs a 500 from a real
+    // upstream error), and its message reaches the client so the user knows the fix.
     assert.equal(r.status, 503);
+    assert.match(r.body.error, /AI is not configured/);
     assert.equal(anthropicCalls.length, 0);
   } finally {
     config.anthropicApiKey = saved;
@@ -135,6 +136,8 @@ test('POST /custom surfaces a non-503 error when Anthropic returns an API error'
   anthropicResponder = () => new Response('rate limited', { status: 429 });
   const r = await client.post('/api/analysis/custom', { question: 'go' });
   assert.equal(r.status, 500);
+  // A non-HttpError is still masked: the upstream response body must not leak.
+  assert.equal(r.body.error, 'Internal error');
 });
 
 // ── overview ────────────────────────────────────────────────────────────
