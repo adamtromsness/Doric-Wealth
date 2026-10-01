@@ -144,10 +144,13 @@ if (fs.existsSync(webDist)) {
 
 // Centralized error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const status = err instanceof HttpError ? err.status : 500;
+  const isHttpError = err instanceof HttpError;
+  const status = isHttpError ? err.status : 500;
   if (status >= 500) console.error(err);
-  // Don't leak internal/DB error text to clients on 500s.
-  const message = status >= 500 ? 'Internal error' : (err.message ?? 'Error');
+  // An HttpError's message is written for the user (e.g. 503 "AI is not configured…"),
+  // so pass it through at any status. Anything else may carry internal/DB error text
+  // and is masked.
+  const message = isHttpError ? (err.message || 'Error') : 'Internal error';
   res.status(status).json({ error: message });
 });
 

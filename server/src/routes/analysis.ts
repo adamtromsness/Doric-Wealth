@@ -7,7 +7,7 @@ import { propertySummary } from './properties.js';
 import { config } from '../config.js';
 import { EFFECTIVE_LINES, EFFECTIVE_LINE_TAGS, ACCOUNT_BALANCES } from '../effectiveLines.js';
 import { hh } from '../tenant.js';
-import { requiredString, round2 } from '../validation.js';
+import { requiredString, round2, integerId } from '../validation.js';
 
 export const analysis = Router();
 
@@ -46,7 +46,7 @@ analysis.post(
   '/vehicle/:id/cost-of-ownership',
   ah(async (req, res) => {
     const bookId = hh(req);
-    const s = await vehicleSummary(Number(req.params.id), bookId);
+    const s = await vehicleSummary(integerId(req.params.id, 'id'), bookId);
     const v: any = s.vehicle;
 
     const recent = await query(
@@ -96,7 +96,7 @@ analysis.post(
   '/property/:id/cost-of-ownership',
   ah(async (req, res) => {
     const bookId = hh(req);
-    const s = await propertySummary(Number(req.params.id), bookId);
+    const s = await propertySummary(integerId(req.params.id, 'id'), bookId);
     const p: any = s.property;
 
     const recent = await query(
