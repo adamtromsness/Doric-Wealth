@@ -47,6 +47,7 @@ const capsOf = (l: Liability | null) => ({ balance: !!l?.tracks_balance, documen
 
 export default function LiabilityDetail() {
   const { liabilityId } = useParams();
+  const isNew = liabilityId === 'new';
   const id = Number(liabilityId);
   const navigate = useNavigate();
   const [liab, setLiab] = useState<Liability | null>(null);
@@ -59,11 +60,32 @@ export default function LiabilityDetail() {
     .then((all) => { const l = all.find((x) => x.id === id) ?? null; setLiab(l); setCaps(capsOf(l)); if (!l) setErr('Liability not found.'); })
     .catch((e) => setErr(e.message));
   const loadBalances = () => api.get<SnapItem[]>(`/liabilities/${id}/balances`).then((bs) => setBalances(bs.map((b) => ({ ...b, value: Number(b.value) })))).catch(() => {});
-  useEffect(() => { if (!Number.isFinite(id)) { setErr('Invalid liability.'); return; } load(); loadBalances(); }, [id]);
+  useEffect(() => {
+    if (isNew) return; // "new" mode renders an empty info form; nothing to load
+    if (!Number.isFinite(id)) { setErr('Invalid liability.'); return; }
+    load(); loadBalances();
+  }, [id]);
   useEffect(() => { const t = TABS.find((x) => x.key === tab); if (t?.cap && !caps[t.cap]) setTab('details'); }, [caps, tab]);
 
   const addBalance = async (as_of: string, value: number) => { await api.post(`/liabilities/${id}/balances`, { as_of, value }); loadBalances(); load(); };
   const delBalance = async (bid: number) => { try { await api.del(`/liabilities/${id}/balances/${bid}`); loadBalances(); load(); } catch (e: any) { setErr(e.message); } };
+
+  // "Add Liability" — render the info form directly on the page (no popup). Saving
+  // creates the liability and navigates to its full detail page.
+  if (isNew) {
+    return (
+      <>
+        <BackLink to="/other-liabilities" label="Back to Other Liabilities" />
+        <div className="page-head" style={{ marginTop: 10 }}>
+          <div>
+            <h1 className="title">Add Liability</h1>
+            <p className="subtitle">Enter the details and Save. You can record balance snapshots and documents after saving.</p>
+          </div>
+        </div>
+        <LiabilityInfoForm liability={null} isNew onSaved={(nl) => navigate(`/other-liabilities/${nl.id}`)} />
+      </>
+    );
+  }
 
   if (err && !liab) return <><BackLink to="/other-liabilities" label="Back to Other Liabilities" /><div className="error" style={{ marginTop: 12 }}>{err}</div></>;
   if (!liab) return <Loading card backTo="/other-liabilities" backLabel="Back to Other Liabilities" />;
@@ -130,20 +152,23 @@ export default function LiabilityDetail() {
   );
 }
 
-function LiabilityInfoForm({ liability, onCapsChange, onSaved, onDeleted }: {
-  liability: Liability; onCapsChange: (c: ReturnType<typeof capsOf>) => void; onSaved: () => void; onDeleted: () => void;
+// The liability info form, used both for "Add Liability" (isNew, liability = null)
+// and the Details tab of an existing liability.
+function LiabilityInfoForm({ liability, isNew = false, onCapsChange, onSaved, onDeleted }: {
+  liability: Liability | null; isNew?: boolean; onCapsChange?: (c: ReturnType<typeof capsOf>) => void;
+  onSaved: (l: Liability) => void; onDeleted?: () => void;
 }) {
-  const seedOf = (l: Liability) => ({
-    name: l.name ?? '', liability_type: l.liability_type ?? 'other',
-    balance: l.balance?.toString() ?? '', original_amount: l.original_amount?.toString() ?? '', interest_rate: l.interest_rate?.toString() ?? '',
-    lender: l.lender ?? '', account_number: l.account_number ?? '', due_day: l.due_day?.toString() ?? '', minimum_payment: l.minimum_payment?.toString() ?? '',
-    opened_date: l.opened_date?.slice(0, 10) ?? '', payoff_date: l.payoff_date?.slice(0, 10) ?? '', notes: l.notes ?? '',
-    tracks_balance: !!l.tracks_balance, has_documents: !!l.has_documents,
+  const seedOf = (l: Liability | null) => ({
+    name: l?.name ?? '', liability_type: l?.liability_type ?? (l ? 'other' : 'personal_loan'),
+    balance: l?.balance?.toString() ?? '', original_amount: l?.original_amount?.toString() ?? '', interest_rate: l?.interest_rate?.toString() ?? '',
+    lender: l?.lender ?? '', account_number: l?.account_number ?? '', due_day: l?.due_day?.toString() ?? '', minimum_payment: l?.minimum_payment?.toString() ?? '',
+    opened_date: l?.opened_date?.slice(0, 10) ?? '', payoff_date: l?.payoff_date?.slice(0, 10) ?? '', notes: l?.notes ?? '',
+    tracks_balance: !!l?.tracks_balance, has_documents: !!l?.has_documents,
   });
   const [f, setF] = useState(() => seedOf(liability));
   const [savedJson, setSavedJson] = useState(() => JSON.stringify(seedOf(liability)));
-  useEffect(() => { const s = seedOf(liability); setF(s); setSavedJson(JSON.stringify(s)); }, [liability.id]);
-  useEffect(() => { onCapsChange({ balance: f.tracks_balance, documents: f.has_documents }); }, [f.tracks_balance, f.has_documents]);
+  useEffect(() => { const s = seedOf(liability); setF(s); setSavedJson(JSON.stringify(s)); }, [liability?.id]);
+  useEffect(() => { onCapsChange?.({ balance: f.tracks_balance, documents: f.has_documents }); }, [f.tracks_balance, f.has_documents]);
   const dirty = JSON.stringify(f) !== savedJson;
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -154,26 +179,29 @@ function LiabilityInfoForm({ liability, onCapsChange, onSaved, onDeleted }: {
     setSaving(true); setErr('');
     const body = {
       name: f.name, liability_type: f.liability_type,
-      balance: f.tracks_balance ? undefined : num(f.balance), original_amount: num(f.original_amount), interest_rate: num(f.interest_rate),
+      // On create the entered balance seeds the liability; afterwards snapshots own it.
+      balance: isNew || !f.tracks_balance ? num(f.balance) : undefined, original_amount: num(f.original_amount), interest_rate: num(f.interest_rate),
       lender: f.lender || null, account_number: f.account_number || null, due_day: num(f.due_day), minimum_payment: num(f.minimum_payment),
       opened_date: f.opened_date || null, payoff_date: f.payoff_date || null, notes: f.notes || null,
       tracks_balance: f.tracks_balance, has_documents: f.has_documents,
     };
-    try { await api.put(`/liabilities/${liability.id}`, body); setSavedJson(JSON.stringify(f)); onSaved(); }
-    catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+    try {
+      const saved = isNew ? await api.post<Liability>('/liabilities', body) : await api.put<Liability>(`/liabilities/${liability!.id}`, body);
+      setSavedJson(JSON.stringify(f)); onSaved(saved);
+    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
   };
   const remove = async () => {
-    if (!confirm(`Delete "${liability.name}"? This can't be undone.`)) return;
-    try { await api.del(`/liabilities/${liability.id}`); onDeleted(); } catch (e: any) { setErr(e.message); }
+    if (!liability || !confirm(`Delete "${liability.name}"? This can't be undone.`)) return;
+    try { await api.del(`/liabilities/${liability.id}`); onDeleted?.(); } catch (e: any) { setErr(e.message); }
   };
 
   return (
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <div className="label" style={{ margin: 0 }}>Liability Details</div>
+        <div className="label" style={{ margin: 0 }}>{isNew ? 'New Liability' : 'Liability Details'}</div>
         <div className="btn-row">
-          <button className="danger" onClick={remove}>Delete</button>
-          <button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
+          {!isNew && onDeleted && <button className="danger" onClick={remove}>Delete</button>}
+          <button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : isNew ? 'Add Liability' : 'Save Changes'}</button>
         </div>
       </div>
       {err && <div className="error" style={{ marginBottom: 12 }}>{err}</div>}
@@ -195,11 +223,13 @@ function LiabilityInfoForm({ liability, onCapsChange, onSaved, onDeleted }: {
 
         <EditorSection title="Balance & Rate" />
         <div className="grid grid-3">
-          {!f.tracks_balance && <Field label="Current Balance"><AmountInput value={f.balance} onChange={(v) => setF({ ...f, balance: v })} placeholder="0.00" /></Field>}
+          {(isNew || !f.tracks_balance) && <Field label="Current Balance"><AmountInput value={f.balance} onChange={(v) => setF({ ...f, balance: v })} placeholder="0.00" /></Field>}
           <Field label="Original Amount"><AmountInput value={f.original_amount} onChange={(v) => setF({ ...f, original_amount: v })} placeholder="0.00" /></Field>
           <Field label="Interest Rate (%)"><input className="num-input" inputMode="decimal" value={f.interest_rate} onChange={(e) => setF({ ...f, interest_rate: e.target.value })} placeholder="6.25" /></Field>
         </div>
-        {f.tracks_balance && <div className="muted" style={{ fontSize: 12 }}>Current balance is set from the latest snapshot on the Balance tab.</div>}
+        {f.tracks_balance && <div className="muted" style={{ fontSize: 12 }}>{isNew
+          ? 'After saving, record the balance over time on the Balance tab.'
+          : 'Current balance is set from the latest snapshot on the Balance tab.'}</div>}
 
         <EditorSection title="Payment & Terms" />
         <div className="grid grid-4">
