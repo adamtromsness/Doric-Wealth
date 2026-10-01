@@ -45,8 +45,19 @@ const MONTHLY_FACTOR: Record<string, number> = {
   quarterly: 1 / 3,
   yearly: 1 / 12,
 };
-const monthlyAmount = (amount: number, cycle: string) =>
-  Math.round(amount * (MONTHLY_FACTOR[cycle] ?? 1) * 100) / 100;
+// Billing cycles per year. Yearly cost is derived from the raw amount, never from
+// the rounded monthly figure: $139/yr is 11.58/mo, but 11.58 × 12 is 138.96.
+const YEARLY_FACTOR: Record<string, number> = {
+  weekly: 52,
+  monthly: 12,
+  quarterly: 4,
+  yearly: 1,
+};
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const rawMonthly = (amount: number, cycle: string) => amount * (MONTHLY_FACTOR[cycle] ?? 1);
+const rawYearly = (amount: number, cycle: string) => amount * (YEARLY_FACTOR[cycle] ?? 12);
+const monthlyAmount = (amount: number, cycle: string) => round2(rawMonthly(amount, cycle));
+const yearlyAmount = (amount: number, cycle: string) => round2(rawYearly(amount, cycle));
 
 // Fixed interval per cycle for advancing the renewal date (not user input).
 const CYCLE_INTERVAL: Record<string, string> = {
@@ -56,7 +67,11 @@ const CYCLE_INTERVAL: Record<string, string> = {
   yearly: '1 year',
 };
 
-const withDerived = (row: any) => ({ ...row, monthly_amount: monthlyAmount(Number(row.amount), row.billing_cycle) });
+const withDerived = (row: any) => ({
+  ...row,
+  monthly_amount: monthlyAmount(Number(row.amount), row.billing_cycle),
+  yearly_amount: yearlyAmount(Number(row.amount), row.billing_cycle),
+});
 
 // ---------------------------------------------------------------------------
 // Subscription detection: scan a book's expense transactions for a
@@ -293,7 +308,9 @@ subscriptions.get(
     const bookId = hh(req);
     await sweepDueCancellations(bookId);
     const active = await query(`SELECT * FROM subscriptions WHERE status = 'active' AND book_id = $1`, [bookId]);
-    const monthly = active.reduce((s, r: any) => s + monthlyAmount(Number(r.amount), r.billing_cycle), 0);
+    // Sum unrounded per-item costs and round once, so per-item rounding doesn't accumulate.
+    const monthly = active.reduce((s, r: any) => s + rawMonthly(Number(r.amount), r.billing_cycle), 0);
+    const yearly = active.reduce((s, r: any) => s + rawYearly(Number(r.amount), r.billing_cycle), 0);
 
     const upcoming = await query(`
       SELECT s.*, c.name AS category_name, a.name AS account_name
@@ -307,8 +324,8 @@ subscriptions.get(
 
     res.json({
       activeCount: active.length,
-      monthlyTotal: Math.round(monthly * 100) / 100,
-      yearlyTotal: Math.round(monthly * 12 * 100) / 100,
+      monthlyTotal: round2(monthly),
+      yearlyTotal: round2(yearly),
       upcoming: upcoming.map(withDerived),
     });
   })

@@ -82,3 +82,23 @@ test('a subscription tag must belong to the book', async () => {
   const r = await a.client.post('/api/transactions', { amount: 5, account_id: acctA, direction: 'expense', tags: [{ kind: 'subscription', ref_id: subB }] });
   assert.equal(r.status, 404);
 });
+
+test('yearly cost comes from the raw amount, not the rounded monthly figure', async () => {
+  const { client } = await registerUser(base);
+  const sub = (await client.post('/api/subscriptions', { name: 'Membership', amount: 139, billing_cycle: 'yearly' })).body;
+  assert.equal(Number(sub.monthly_amount), 11.58);
+  assert.equal(Number(sub.yearly_amount), 139);
+
+  const listed = (await client.get('/api/subscriptions')).body.find((x: any) => x.id === sub.id);
+  assert.equal(Number(listed.yearly_amount), 139);
+
+  // Other cycles: quarterly ×4, weekly ×52, from the raw amount.
+  await client.post('/api/subscriptions', { name: 'Quarterly', amount: 10, billing_cycle: 'quarterly' });
+  await client.post('/api/subscriptions', { name: 'Weekly', amount: 3.33, billing_cycle: 'weekly' });
+
+  // Totals round once at the end: yearly = 139 + 40 + 173.16 = 352.16
+  // (summing rounded monthlies × 12 would give 11.58 + 3.33 + 14.43 = 29.34 × 12 = 352.08).
+  const summary = (await client.get('/api/subscriptions/summary')).body;
+  assert.equal(summary.yearlyTotal, 352.16);
+  assert.equal(summary.monthlyTotal, 29.35);
+});

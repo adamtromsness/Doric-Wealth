@@ -42,7 +42,7 @@ const sub = (over: Partial<any> = {}): any => ({
   next_due_date: daysOut(20), category_id: null, account_id: 9, status: 'active',
   start_date: '2026-01-01', notes: null, tier: 'Standard', service_type: 'streaming',
   end_date: null, login_url: null, login_id: null, website_url: null, phone: null,
-  category_name: null, account_name: 'Visa', monthly_amount: 17.99, doc_count: 0, ...over,
+  category_name: null, account_name: 'Visa', monthly_amount: 17.99, yearly_amount: 215.88, doc_count: 0, ...over,
 });
 
 const charge = (over: Partial<any> = {}): any => ({
@@ -123,6 +123,15 @@ describe('SubscriptionDetail', () => {
     expect(screen.getByText('$17.99 · 1 payment')).toBeInTheDocument();
     const acct = screen.getByText('Account').closest('.detail-row') as HTMLElement;
     expect(within(acct).getByText('Visa')).toBeInTheDocument();
+  });
+
+  it('shows the server yearly cost rather than the rounded monthly cost × 12', async () => {
+    setup({ subs: [sub({ billing_cycle: 'yearly', amount: 139, monthly_amount: 11.58, yearly_amount: 139 })] });
+    renderPage();
+    await screen.findByRole('heading', { name: /Netflix/ });
+    const row = screen.getAllByText('Cost / Year').map((el) => el.closest('.detail-row')).find(Boolean) as HTMLElement;
+    expect(within(row).getByText('$139.00')).toBeInTheDocument();
+    expect(screen.queryByText('$138.96')).toBeNull();
   });
 
   it('reports an invalid id', async () => {

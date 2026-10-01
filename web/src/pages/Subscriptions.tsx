@@ -27,6 +27,8 @@ export interface Subscription {
   category_name: string | null;
   account_name: string | null;
   monthly_amount: number;
+  // Derived from the raw amount (not monthly_amount × 12, which drifts after rounding).
+  yearly_amount: number;
   doc_count: number;
 }
 interface Summary {
@@ -167,24 +169,24 @@ export default function Subscriptions() {
 
   // Active-only spend, grouped by service type and per subscription. Scaled to a
   // monthly or yearly figure for the charts via the view toggle.
-  const mult = chartView === 'yearly' ? 12 : 1;
   const viewWord = chartView === 'yearly' ? 'Yearly' : 'Monthly';
+  const viewAmount = (s: Subscription) => Number((chartView === 'yearly' ? s.yearly_amount : s.monthly_amount) || 0);
   const spendByType = useMemo(() => {
     const m = new Map<string, number>();
     for (const s of subs.filter((x) => x.status === 'active')) {
       const label = s.service_type ? serviceTypeLabel(s.service_type) : 'Unspecified';
-      m.set(label, (m.get(label) ?? 0) + Number(s.monthly_amount || 0) * mult);
+      m.set(label, (m.get(label) ?? 0) + viewAmount(s));
     }
     return [...m.entries()]
       .map(([label, value]) => ({ label, value: Math.round(value * 100) / 100 }))
       .sort((a, b) => b.value - a.value);
-  }, [subs, mult]);
+  }, [subs, chartView]);
   const spendBySub = useMemo(() =>
     subs.filter((s) => s.status === 'active')
-      .map((s) => ({ name: s.name, value: Math.round(Number(s.monthly_amount || 0) * mult * 100) / 100 }))
+      .map((s) => ({ name: s.name, value: Math.round(viewAmount(s) * 100) / 100 }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8),
-    [subs, mult]
+    [subs, chartView]
   );
   const typeTotal = spendByType.reduce((s, x) => s + x.value, 0);
   const hasCharts = spendBySub.length > 0;
@@ -349,7 +351,7 @@ export default function Subscriptions() {
                 <div style={{ padding: '12px 14px' }}>
                   <div className="grid grid-3" style={{ marginBottom: facts.length ? 8 : 0 }}>
                     <div className="stat"><div className="label">Per Month</div><div className="value small">{money(s.monthly_amount)}</div></div>
-                    <div className="stat"><div className="label">Per Year</div><div className="value small">{money(monthly * 12)}</div></div>
+                    <div className="stat"><div className="label">Per Year</div><div className="value small">{money(s.yearly_amount)}</div></div>
                     <div className="stat">
                       <div className="label">Next Due</div>
                       {showNext
