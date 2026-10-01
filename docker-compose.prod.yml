@@ -1,0 +1,78 @@
+# Production-mode local stack: the same image, config checks, and restricted DB
+# role as the AWS deployment (DEPLOY.md), running on this machine. Real data lives
+# here — the dev stack in docker-compose.yml (port 5433) is for development only.
+#
+# Manage it with the scripts in scripts/local-prod/ (they pass --env-file):
+#   scripts/local-prod/init-env.sh   # once: generates .env.production with secrets
+#   scripts/local-prod/deploy.sh     # build, migrate, (re)start
+name: doric-local
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: doric_local_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: doric_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/local-prod/init-env.sh}
+      POSTGRES_DB: doric
+    ports:
+      # Loopback only — reachable from this machine, not the LAN.
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - doric_local_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U doric_admin -d doric"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: doric:local
+    container_name: doric_local_app
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Privileged role: migrations and setupDbRole only.
+      DATABASE_URL: postgresql://doric_admin:${POSTGRES_PASSWORD}@db:5432/doric
+      # Restricted role the server runs as, so row-level security is enforced.
+      APP_DATABASE_URL: postgresql://${APP_DB_USER}:${APP_DB_PASSWORD}@db:5432/doric
+      APP_DB_USER: ${APP_DB_USER}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:?run scripts/local-prod/init-env.sh}
+      APP_BASE_URL: http://localhost:4100
+      # Plain http on localhost, no proxy in front. On AWS both are on (the defaults).
+      COOKIE_SECURE: "false"
+      TRUST_PROXY: "false"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      RENTCAST_API_KEY: ${RENTCAST_API_KEY:-}
+    ports:
+      - "127.0.0.1:4100:4000"
+
+  # Nightly pg_dump to a host folder (on the Windows side by default), pruned
+  # after BACKUP_KEEP_DAYS. Takes one dump at start, then every 24h.
+  backup:
+    image: postgres:16-alpine
+    container_name: doric_local_backup
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: doric_admin
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: doric
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+    volumes:
+      - ${BACKUP_DIR:?set BACKUP_DIR in .env.production}:/backups
+      - ./scripts/local-prod/backup-loop.sh:/backup-loop.sh:ro
+    entrypoint: ["/bin/sh", "/backup-loop.sh"]
+
+volumes:
+  doric_local_pgdata:
