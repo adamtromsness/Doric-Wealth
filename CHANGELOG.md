@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Added
+- **What's New** page: click the version number in the top bar to see the current version and the notes for every release.
+
 ## [1.2.1] - 2026-10-01
 
 ### Fixed

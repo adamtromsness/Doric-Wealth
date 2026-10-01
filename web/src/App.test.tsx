@@ -84,8 +84,10 @@ describe('App shell', () => {
     // Greeting names the user and the active book.
     expect(screen.getByText(/Hi Ada\./)).toBeInTheDocument();
     expect(screen.getByText('Household')).toBeInTheDocument();
-    // Version badge comes from the build-time define.
-    expect(screen.getByTitle('Software version')).toHaveTextContent(/^v\d+/);
+    // Version badge comes from the build-time define and links to What's New.
+    const version = screen.getByTitle("What's new in this version");
+    expect(version).toHaveTextContent(/^v\d+/);
+    expect(version).toHaveAttribute('href', '/changelog');
   });
 
   it('omits the book clause when no book is active', async () => {

@@ -9,6 +9,8 @@ WORKDIR /web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
+# vite.config.ts reads ../CHANGELOG.md for the What's New page.
+COPY CHANGELOG.md /CHANGELOG.md
 RUN npm run build
 
 # 2) Compile the server (TypeScript -> dist, incl. migrate.js / bootstrap.js)

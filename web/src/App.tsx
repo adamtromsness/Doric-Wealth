@@ -1,10 +1,11 @@
 import { lazy, Suspense } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth, displayName } from './auth';
 import { DoricBadge } from './components/DoricMark';
 // Pages are route-split (React.lazy) so each loads on demand — this keeps the
 // initial bundle small instead of shipping every screen (and its charts) up front.
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Changelog = lazy(() => import('./pages/Changelog'));
 const Goals = lazy(() => import('./pages/Goals'));
 const Accounts = lazy(() => import('./pages/Accounts'));
 const AccountDetail = lazy(() => import('./pages/AccountDetail'));
@@ -121,7 +122,7 @@ export default function App() {
             Hi {displayName(user)}.{activeBook ? <> You are working on <strong>{activeBook.name}</strong>.</> : null}
           </div>
           <div className="topbar-right">
-            <span className="topbar-version" title="Software version">v{__APP_VERSION__}</span>
+            <Link to="/changelog" className="topbar-version" title="What's new in this version">v{__APP_VERSION__}</Link>
             <UserMenu />
           </div>
         </div>
@@ -129,6 +130,7 @@ export default function App() {
         <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/changelog" element={<Changelog />} />
           <Route path="/goals" element={<Goals />} />
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/budgets" element={<Budgets />} />
