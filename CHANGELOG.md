@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-01
+
 ### Changed
 - **Sign-up is now by invitation.** New people need an invite link to create an account. An invite from **My Books → New Invite Link** adds them straight to that book. Before, they also got an empty book of their own.
 - The sign-in and sign-up pages explain how to get access when you don't have an invite.
