@@ -113,6 +113,7 @@ function makeGet(overrides: Record<string, any> = {}, vehicle: any = baseVehicle
     '/vehicles/loan-accounts': [],
     '/categories': [], '/accounts': [], '/properties': [], '/subscriptions': [], '/tags': [],
     '/transactions/merchants': [],
+    '/auth/ai-settings': { configured: true },
     ...overrides,
   };
   return (path: string) => {
@@ -247,6 +248,23 @@ describe('VehicleDetail — value & odometer tabs (snapshots)', () => {
     );
     await screen.findByText(/Estimated/);
     expect(screen.getByText(/depreciated/)).toBeInTheDocument();
+  });
+
+  it('disables Estimate & Record and links to AI Settings when no AI key is configured', async () => {
+    (api.get as any).mockImplementation(makeGet({ '/auth/ai-settings': { configured: false } }));
+    renderAt();
+    await screen.findByRole('heading', { name: 'Daily Driver' });
+    await userEvent.click(screen.getByRole('button', { name: 'Value' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Estimate & Record' })).toBeDisabled());
+    expect(screen.getByRole('link', { name: 'AI Settings' })).toHaveAttribute('href', '/integrations/ai');
+    expect(api.post).not.toHaveBeenCalledWith('/vehicles/estimate-value', expect.anything());
+  });
+
+  it('disables the new-vehicle Estimate button when no AI key is configured', async () => {
+    (api.get as any).mockImplementation(makeGet({ '/auth/ai-settings': { configured: false } }));
+    renderAt('/vehicles/new');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Estimate' })).toBeDisabled());
+    expect(screen.getByRole('link', { name: 'AI Settings' })).toBeInTheDocument();
   });
 
   it('shows an error when the value estimate fails', async () => {

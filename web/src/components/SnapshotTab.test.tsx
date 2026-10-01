@@ -49,6 +49,12 @@ describe('SnapshotTab', () => {
     expect(screen.getByRole('button', { name: 'Estimating…' })).toBeDisabled();
   });
 
+  it('disables the estimate button and shows the reason when estimateDisabledReason is set', () => {
+    wrap(<SnapshotTab items={[]} onAdd={vi.fn()} onDelete={vi.fn()} onEstimate={vi.fn()} estimateDisabledReason="no key" />);
+    expect(screen.getByRole('button', { name: 'Estimate & Record' })).toBeDisabled();
+    expect(screen.getByText('no key')).toBeInTheDocument();
+  });
+
   it('uses explicit chartPoints for the chart when provided', () => {
     const points = [{ as_of: '2026-01-01', value: 1 }, { as_of: '2026-02-01', value: 2 }];
     wrap(<SnapshotTab items={[]} onAdd={vi.fn()} onDelete={vi.fn()} chartPoints={points} chartTitle="Over Time" />);

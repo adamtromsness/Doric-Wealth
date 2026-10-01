@@ -9,13 +9,14 @@ import { SnapshotSection, type SnapItem } from './SnapshotSection';
 // card (when there are ≥2 snapshots) followed by a list/add card — so switching
 // between tabs keeps the chart the same size. Defaults render currency; pass
 // `format`/`yTickFormat`/`integer` for other series (e.g. odometer miles). The
-// per-asset estimate logic stays with the caller — pass `onEstimate` to expose it.
+// per-asset estimate logic stays with the caller — pass `onEstimate` to expose it,
+// and `estimateDisabledReason` to disable it with an explanation.
 export function SnapshotTab({
   items, onAdd, onDelete,
   title = 'Value Snapshots', chartTitle = 'Value Over Time', valueLabel = 'Value', addLabel = 'Add Value',
   hint, emptyText,
   format = money, yTickFormat = (v: number) => '$' + Math.round(v / 1000) + 'k', integer = false, placeholder = '0.00', chartColor = '#6B7F6E',
-  onEstimate, estimating = false, estimateMsg, estimateLabel = 'Estimate & Record',
+  onEstimate, estimating = false, estimateMsg, estimateLabel = 'Estimate & Record', estimateDisabledReason,
   chartPoints,
 }: {
   items: SnapItem[];
@@ -36,6 +37,8 @@ export function SnapshotTab({
   estimating?: boolean;
   estimateMsg?: string;
   estimateLabel?: string;
+  // When set, the estimate button is disabled and this explains why.
+  estimateDisabledReason?: ReactNode;
   // Optional explicit chart series (e.g. seeded with a purchase price → today),
   // used for the chart only; the list/add row still come from `items`. Falls back
   // to deriving the series from `items` when omitted.
@@ -68,8 +71,9 @@ export function SnapshotTab({
             <div className="label" style={{ margin: 0 }}>{title}</div>
             {hint && <div className="muted" style={{ fontSize: 12, marginTop: 2 }}>{hint}</div>}
           </div>
-          {onEstimate && <button className="brass" onClick={onEstimate} disabled={estimating}>{estimating ? 'Estimating…' : estimateLabel}</button>}
+          {onEstimate && <button className="brass" onClick={onEstimate} disabled={estimating || !!estimateDisabledReason}>{estimating ? 'Estimating…' : estimateLabel}</button>}
         </div>
+        {onEstimate && estimateDisabledReason && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{estimateDisabledReason}</div>}
         {estimateMsg && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>{estimateMsg}</div>}
         {items.length === 0 && emptyText && <div className="banner" style={{ marginBottom: 12 }}>{emptyText}</div>}
         <SnapshotSection

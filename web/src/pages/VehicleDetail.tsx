@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState, type ReactNode, type CSSPropert
 import { useNavigate, useParams } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { api, money, shortDate, todayStr, parseLocalDate, disposalTypeLabel } from '../api';
+import { useAiConfigured, AiKeyHint } from '../aiStatus';
 import { AiOutput, BackLink, chartTooltip, Modal, Field, AmountInput, EditorSection, fileToBase64, Loading } from '../components/ui';
 import { type SnapItem } from '../components/SnapshotSection';
 import { SnapshotTab } from '../components/SnapshotTab';
@@ -96,6 +97,7 @@ export default function VehicleDetail() {
   const [running, setRunning] = useState(false);
   const [estimating, setEstimating] = useState(false);
   const [estimateMsg, setEstimateMsg] = useState('');
+  const aiConfigured = useAiConfigured();
   const [tab, setTab] = useState<Tab>('overview');
   const [disposing, setDisposing] = useState(false);
   const [addingTxn, setAddingTxn] = useState(false);
@@ -462,6 +464,7 @@ export default function VehicleDetail() {
           estimating={estimating}
           estimateMsg={estimateMsg}
           estimateLabel="Estimate & Record"
+          estimateDisabledReason={aiConfigured === false ? <AiKeyHint action="estimate value" /> : undefined}
         />
       )}
 
@@ -955,6 +958,7 @@ function VehicleInfoForm({ vehicle, isNew, onSaved, onDeleted, beforeDocuments, 
   const [decodeMsg, setDecodeMsg] = useState('');
   const [estimating, setEstimating] = useState(false);
   const [estimateMsg, setEstimateMsg] = useState('');
+  const aiConfigured = useAiConfigured();
   const navigate = useNavigate();
   // Car loan, managed as a liability account (mirrors a property's mortgage).
   const linkedLoanOf = (v: Vehicle | null) => (v?.loan_account_id != null
@@ -1173,8 +1177,9 @@ function VehicleInfoForm({ vehicle, isNew, onSaved, onDeleted, beforeDocuments, 
             <Field label="Current Value">
               <div className="row" style={{ gap: 8 }}>
                 <AmountInput value={f.current_value} onChange={(v) => { setF({ ...f, current_value: v }); setEstimateMsg(''); }} placeholder="Enter manually or estimate" style={{ flex: 1 }} />
-                <button type="button" className="brass" onClick={estimateValue} disabled={estimating}>{estimating ? 'Estimating…' : 'Estimate'}</button>
+                <button type="button" className="brass" onClick={estimateValue} disabled={estimating || aiConfigured === false}>{estimating ? 'Estimating…' : 'Estimate'}</button>
               </div>
+              {aiConfigured === false && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}><AiKeyHint action="estimate value" /></div>}
               {estimateMsg && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>{estimateMsg}</div>}
             </Field>
             <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>After saving, record value over time on the Value tab.</div>
