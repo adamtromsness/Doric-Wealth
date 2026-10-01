@@ -48,6 +48,7 @@ const capsOf = (a: Asset | null) => ({
 
 export default function AssetDetail() {
   const { assetId } = useParams();
+  const isNew = assetId === 'new';
   const id = Number(assetId);
   const navigate = useNavigate();
   const [asset, setAsset] = useState<Asset | null>(null);
@@ -60,12 +61,33 @@ export default function AssetDetail() {
     .then((all) => { const a = all.find((x) => x.id === id) ?? null; setAsset(a); setCaps(capsOf(a)); if (!a) setErr('Asset not found.'); })
     .catch((e) => setErr(e.message));
   const loadValues = () => api.get<SnapItem[]>(`/assets/${id}/values`).then((vs) => setValues(vs.map((v) => ({ ...v, value: Number(v.value) })))).catch(() => {});
-  useEffect(() => { if (!Number.isFinite(id)) { setErr('Invalid asset.'); return; } load(); loadValues(); }, [id]);
+  useEffect(() => {
+    if (isNew) return; // "new" mode renders an empty info form; nothing to load
+    if (!Number.isFinite(id)) { setErr('Invalid asset.'); return; }
+    load(); loadValues();
+  }, [id]);
   // If the open tab's capability gets turned off, fall back to Details.
   useEffect(() => { const t = TABS.find((x) => x.key === tab); if (t?.cap && !caps[t.cap]) setTab('details'); }, [caps, tab]);
 
   const addValue = async (as_of: string, value: number) => { await api.post(`/assets/${id}/values`, { as_of, value }); loadValues(); load(); };
   const delValue = async (vid: number) => { try { await api.del(`/assets/${id}/values/${vid}`); loadValues(); load(); } catch (e: any) { setErr(e.message); } };
+
+  // "Add Asset" — render the info form directly on the page (no popup). Saving
+  // creates the asset and navigates to its full detail page.
+  if (isNew) {
+    return (
+      <>
+        <BackLink to="/other-assets" label="Back to Other Assets" />
+        <div className="page-head" style={{ marginTop: 10 }}>
+          <div>
+            <h1 className="title">Add Asset</h1>
+            <p className="subtitle">Enter the details and Save. You can record value snapshots, maintenance, insurance and documents after saving.</p>
+          </div>
+        </div>
+        <AssetInfoForm asset={null} isNew onSaved={(na) => navigate(`/other-assets/${na.id}`)} />
+      </>
+    );
+  }
 
   if (err && !asset) return <><BackLink to="/other-assets" label="Back to Other Assets" /><div className="error" style={{ marginTop: 12 }}>{err}</div></>;
   if (!asset) return <Loading card backTo="/other-assets" backLabel="Back to Other Assets" />;
@@ -129,19 +151,22 @@ export default function AssetDetail() {
   );
 }
 
-function AssetInfoForm({ asset, onCapsChange, onSaved, onDeleted }: {
-  asset: Asset; onCapsChange: (c: ReturnType<typeof capsOf>) => void; onSaved: () => void; onDeleted: () => void;
+// The asset info form, used both for "Add Asset" (isNew, asset = null) and the
+// Details tab of an existing asset.
+function AssetInfoForm({ asset, isNew = false, onCapsChange, onSaved, onDeleted }: {
+  asset: Asset | null; isNew?: boolean; onCapsChange?: (c: ReturnType<typeof capsOf>) => void;
+  onSaved: (a: Asset) => void; onDeleted?: () => void;
 }) {
-  const seedOf = (a: Asset) => ({
-    name: a.name ?? '', asset_type: a.asset_type ?? 'other',
-    value: a.value?.toString() ?? '', purchase_price: a.purchase_price?.toString() ?? '',
-    purchase_date: a.purchase_date?.slice(0, 10) ?? '', notes: a.notes ?? '',
-    tracks_value: !!a.tracks_value, has_maintenance: !!a.has_maintenance, has_insurance: !!a.has_insurance, has_documents: !!a.has_documents,
+  const seedOf = (a: Asset | null) => ({
+    name: a?.name ?? '', asset_type: a?.asset_type ?? 'other',
+    value: a?.value?.toString() ?? '', purchase_price: a?.purchase_price?.toString() ?? '',
+    purchase_date: a?.purchase_date?.slice(0, 10) ?? '', notes: a?.notes ?? '',
+    tracks_value: !!a?.tracks_value, has_maintenance: !!a?.has_maintenance, has_insurance: !!a?.has_insurance, has_documents: !!a?.has_documents,
   });
   const [f, setF] = useState(() => seedOf(asset));
   const [savedJson, setSavedJson] = useState(() => JSON.stringify(seedOf(asset)));
-  useEffect(() => { const s = seedOf(asset); setF(s); setSavedJson(JSON.stringify(s)); }, [asset.id]);
-  useEffect(() => { onCapsChange({ value: f.tracks_value, maintenance: f.has_maintenance, insurance: f.has_insurance, documents: f.has_documents }); },
+  useEffect(() => { const s = seedOf(asset); setF(s); setSavedJson(JSON.stringify(s)); }, [asset?.id]);
+  useEffect(() => { onCapsChange?.({ value: f.tracks_value, maintenance: f.has_maintenance, insurance: f.has_insurance, documents: f.has_documents }); },
     [f.tracks_value, f.has_maintenance, f.has_insurance, f.has_documents]);
   const dirty = JSON.stringify(f) !== savedJson;
   const [saving, setSaving] = useState(false);
@@ -153,25 +178,28 @@ function AssetInfoForm({ asset, onCapsChange, onSaved, onDeleted }: {
     setSaving(true); setErr('');
     const body = {
       name: f.name, asset_type: f.asset_type,
-      value: f.tracks_value ? undefined : num(f.value), purchase_price: num(f.purchase_price),
+      // On create the entered value seeds the asset; afterwards snapshots own it.
+      value: isNew || !f.tracks_value ? num(f.value) : undefined, purchase_price: num(f.purchase_price),
       purchase_date: f.purchase_date || null, notes: f.notes || null,
       tracks_value: f.tracks_value, has_maintenance: f.has_maintenance, has_insurance: f.has_insurance, has_documents: f.has_documents,
     };
-    try { await api.put(`/assets/${asset.id}`, body); setSavedJson(JSON.stringify(f)); onSaved(); }
-    catch (e: any) { setErr(e.message); } finally { setSaving(false); }
+    try {
+      const saved = isNew ? await api.post<Asset>('/assets', body) : await api.put<Asset>(`/assets/${asset!.id}`, body);
+      setSavedJson(JSON.stringify(f)); onSaved(saved);
+    } catch (e: any) { setErr(e.message); } finally { setSaving(false); }
   };
   const remove = async () => {
-    if (!confirm(`Delete "${asset.name}"? This can't be undone.`)) return;
-    try { await api.del(`/assets/${asset.id}`); onDeleted(); } catch (e: any) { setErr(e.message); }
+    if (!asset || !confirm(`Delete "${asset.name}"? This can't be undone.`)) return;
+    try { await api.del(`/assets/${asset.id}`); onDeleted?.(); } catch (e: any) { setErr(e.message); }
   };
 
   return (
     <>
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-        <div className="label" style={{ margin: 0 }}>Asset Details</div>
+        <div className="label" style={{ margin: 0 }}>{isNew ? 'New Asset' : 'Asset Details'}</div>
         <div className="btn-row">
-          <button className="danger" onClick={remove}>Delete</button>
-          <button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
+          {!isNew && onDeleted && <button className="danger" onClick={remove}>Delete</button>}
+          <button onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : isNew ? 'Add Asset' : 'Save Changes'}</button>
         </div>
       </div>
       {err && <div className="error" style={{ marginBottom: 12 }}>{err}</div>}
@@ -182,16 +210,18 @@ function AssetInfoForm({ asset, onCapsChange, onSaved, onDeleted }: {
           <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Airstream Trailer" /></Field>
           <Field label="Type">
             <select value={f.asset_type} onChange={(e) => setF({ ...f, asset_type: e.target.value })}>
-              {ASSET_TYPES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              {ASSET_TYPES.filter(([v]) => !isNew || v !== 'property').map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
           </Field>
         </div>
         <div className="grid grid-3">
-          {!f.tracks_value && <Field label="Current Value"><AmountInput value={f.value} onChange={(v) => setF({ ...f, value: v })} placeholder="0.00" /></Field>}
+          {(isNew || !f.tracks_value) && <Field label="Current Value"><AmountInput value={f.value} onChange={(v) => setF({ ...f, value: v })} placeholder="0.00" /></Field>}
           <Field label="Purchase Price"><AmountInput value={f.purchase_price} onChange={(v) => setF({ ...f, purchase_price: v })} placeholder="0.00" /></Field>
           <Field label="Purchase Date"><input type="date" value={f.purchase_date} onChange={(e) => setF({ ...f, purchase_date: e.target.value })} /></Field>
         </div>
-        {f.tracks_value && <div className="muted" style={{ fontSize: 12 }}>Current value is set from the latest snapshot on the Value tab.</div>}
+        {f.tracks_value && <div className="muted" style={{ fontSize: 12 }}>{isNew
+          ? 'After saving, record value over time on the Value tab.'
+          : 'Current value is set from the latest snapshot on the Value tab.'}</div>}
 
         <EditorSection title="Notes" />
         <Field label="Notes"><input value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>

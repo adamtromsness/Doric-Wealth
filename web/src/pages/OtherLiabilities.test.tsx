@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import OtherLiabilities from './OtherLiabilities';
@@ -70,48 +70,13 @@ describe('OtherLiabilities page', () => {
     expect(navigateMock).toHaveBeenCalledWith('/other-liabilities/4');
   });
 
-  it('adds a liability: validation, create, and navigate', async () => {
+  it('Add Liability opens the add page instead of a popup', async () => {
     const user = userEvent.setup();
     (api.get as any).mockResolvedValue([]);
     renderPage();
     await screen.findByText(/No standalone liabilities yet/);
     await user.click(screen.getByRole('button', { name: 'Add Liability' }));
-    const modal = () => within(document.querySelector('.modal') as HTMLElement);
-    // Save stays disabled until the form is dirty, so a whitespace-only name is
-    // what actually reaches the validation branch.
-    const nameInput = screen.getByPlaceholderText('e.g. Family loan');
-    await user.type(nameInput, '   ');
-    await user.click(modal().getByRole('button', { name: 'Add Liability' }));
-    expect(await screen.findByText('Name is required.')).toBeInTheDocument();
-    expect(api.post).not.toHaveBeenCalled();
-
-    await user.clear(nameInput);
-    await user.type(nameInput, 'Car Loan');
-    await user.type(screen.getByPlaceholderText('6.25'), '4.2');
-    await user.click(modal().getByRole('button', { name: 'Add Liability' }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/liabilities', expect.objectContaining({ name: 'Car Loan', liability_type: 'personal_loan', interest_rate: 4.2 })));
-    expect(navigateMock).toHaveBeenCalledWith('/other-liabilities/55');
-  });
-
-  it('surfaces a save error', async () => {
-    const user = userEvent.setup();
-    (api.get as any).mockResolvedValue([]);
-    (api.post as any).mockRejectedValue(new Error('nope'));
-    renderPage();
-    await screen.findByText(/No standalone liabilities yet/);
-    await user.click(screen.getByRole('button', { name: 'Add Liability' }));
-    await user.type(screen.getByPlaceholderText('e.g. Family loan'), 'X');
-    await user.click(within(document.querySelector('.modal') as HTMLElement).getByRole('button', { name: 'Add Liability' }));
-    expect(await screen.findByText('nope')).toBeInTheDocument();
-  });
-
-  it('closes the add modal', async () => {
-    const user = userEvent.setup();
-    (api.get as any).mockResolvedValue([]);
-    renderPage();
-    await screen.findByText(/No standalone liabilities yet/);
-    await user.click(screen.getByRole('button', { name: 'Add Liability' }));
-    await user.click(screen.getByRole('button', { name: 'Close' }));
-    await waitFor(() => expect(screen.queryByPlaceholderText('e.g. Family loan')).toBeNull());
+    expect(navigateMock).toHaveBeenCalledWith('/other-liabilities/new');
+    expect(document.querySelector('.modal')).toBeNull();
   });
 });

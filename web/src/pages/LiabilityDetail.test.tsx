@@ -195,4 +195,55 @@ describe('LiabilityDetail page', () => {
     // With tracking on, the note is shown and the Current Balance field is hidden.
     expect(await screen.findByText(/Current balance is set from the latest snapshot/)).toBeInTheDocument();
   });
+
+  describe('Add Liability (new mode)', () => {
+    it('renders the details form on the page, without loading or a popup', () => {
+      renderAt('new');
+      expect(screen.getByRole('heading', { name: 'Add Liability' })).toBeInTheDocument();
+      expect(screen.getByText('New Liability')).toBeInTheDocument();
+      expect(screen.getByText('What This Liability Tracks')).toBeInTheDocument();
+      expect(document.querySelector('.modal')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Add Liability' })).toBeDisabled();
+      // Same default type as the old Add popup.
+      expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('personal_loan');
+      expect(api.get).not.toHaveBeenCalled();
+    });
+
+    it('validates a blank name', async () => {
+      const user = userEvent.setup();
+      renderAt('new');
+      await user.type(screen.getByPlaceholderText('e.g. Family loan'), '   ');
+      await user.click(screen.getByRole('button', { name: 'Add Liability' }));
+      expect(await screen.findByText('Name is required.')).toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
+    });
+
+    it('creates the liability with its balance and tracking choices, then opens it', async () => {
+      const user = userEvent.setup();
+      (api.post as any).mockResolvedValue({ id: 42 });
+      renderAt('new');
+      await user.type(screen.getByPlaceholderText('e.g. Family loan'), 'Hospital Bill');
+      await user.selectOptions(screen.getByRole('combobox'), 'medical');
+      await user.click(screen.getByText('Track balance over time'));
+      // The starting balance stays editable on create even when balance tracking is on.
+      expect(screen.getByText('After saving, record the balance over time on the Balance tab.')).toBeInTheDocument();
+      await user.type(screen.getAllByPlaceholderText('0.00')[0], '2500');
+      await user.click(screen.getByRole('button', { name: 'Add Liability' }));
+      await waitFor(() => expect(api.post).toHaveBeenCalledWith('/liabilities', expect.objectContaining({
+        name: 'Hospital Bill', liability_type: 'medical', balance: 2500, tracks_balance: true,
+      })));
+      expect(navigateMock).toHaveBeenCalledWith('/other-liabilities/42');
+    });
+
+    it('surfaces a create error', async () => {
+      const user = userEvent.setup();
+      (api.post as any).mockRejectedValue(new Error('create failed'));
+      renderAt('new');
+      await user.type(screen.getByPlaceholderText('e.g. Family loan'), 'X');
+      await user.click(screen.getByRole('button', { name: 'Add Liability' }));
+      expect(await screen.findByText('create failed')).toBeInTheDocument();
+      expect(navigateMock).not.toHaveBeenCalled();
+    });
+  });
 });
