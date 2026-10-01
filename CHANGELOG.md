@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-01
+
 ### Changed
 - **Add Asset** on Other Assets now opens a full page, like Add Vehicle and Add Property, instead of a popup. It also lets you choose what the asset tracks (value, maintenance, insurance, documents) when you create it.
 - **Add Liability** on Other Liabilities now opens a full page instead of a popup too, with every detail field (lender, payment terms, payoff date) and the tracking choices available up front.
