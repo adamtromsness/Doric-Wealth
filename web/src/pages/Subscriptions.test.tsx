@@ -43,7 +43,7 @@ const sub = (over: Partial<any> = {}): any => ({
   next_due_date: daysOut(20), category_id: null, account_id: 9, status: 'active',
   start_date: '2026-01-01', notes: null, tier: 'Standard', service_type: 'streaming',
   end_date: null, login_url: null, login_id: null, website_url: null, phone: null,
-  category_name: null, account_name: 'Visa', monthly_amount: 17.99, doc_count: 0, ...over,
+  category_name: null, account_name: 'Visa', monthly_amount: 17.99, yearly_amount: 215.88, doc_count: 0, ...over,
 });
 
 const summary = (over: Partial<any> = {}): any => ({
@@ -189,7 +189,7 @@ describe('Subscriptions page', () => {
   });
 
   it('caps the per-subscription chart at the top eight', async () => {
-    const many = Array.from({ length: 9 }, (_, i) => sub({ id: i + 1, name: `Svc ${i + 1}`, monthly_amount: i + 1 }));
+    const many = Array.from({ length: 9 }, (_, i) => sub({ id: i + 1, name: `Svc ${i + 1}`, monthly_amount: i + 1, yearly_amount: (i + 1) * 12 }));
     setup({ subs: many });
     renderPage();
     expect(await screen.findByText('Monthly Cost by Subscription (top 8)')).toBeInTheDocument();
@@ -275,7 +275,7 @@ describe('Subscriptions page', () => {
 
   it('shows and hides the separate cancelled section', async () => {
     setup({
-      subs: [sub(), sub({ id: 2, name: 'Old Thing', status: 'canceled', start_date: '2025-01-01', end_date: '2026-03-01', amount: 9.99, monthly_amount: 9.99 })],
+      subs: [sub(), sub({ id: 2, name: 'Old Thing', status: 'canceled', start_date: '2025-01-01', end_date: '2026-03-01', amount: 9.99, monthly_amount: 9.99, yearly_amount: 119.88 })],
     });
     renderPage();
     expect(await screen.findByText('Cancelled Subscriptions · 1')).toBeInTheDocument();

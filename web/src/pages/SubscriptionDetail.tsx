@@ -219,7 +219,7 @@ export default function SubscriptionDetail() {
     { label: 'Billing Cycle', value: cap(s.billing_cycle) },
     { label: 'Amount per Cycle', value: money(s.amount) },
     { label: 'Cost / Month', value: money(s.monthly_amount) },
-    { label: 'Cost / Year', value: money(Number(s.monthly_amount || 0) * 12) },
+    { label: 'Cost / Year', value: money(s.yearly_amount) },
     { label: 'Next Due', value: nextDueValue },
     { label: 'Member Since', value: memberSince ? shortDate(memberSince) : '—' },
     { label: 'Total Charges', value: `${money(total)} · ${chargeCount} payment${chargeCount === 1 ? '' : 's'}` },
@@ -260,7 +260,7 @@ export default function SubscriptionDetail() {
         <>
           <div className="grid grid-3" style={{ marginBottom: 16 }}>
             <div className="card stat"><div className="label">Cost / Month</div><div className="value debit">{money(s.monthly_amount)}</div></div>
-            <div className="card stat"><div className="label">Cost / Year</div><div className="value debit">{money(Number(s.monthly_amount || 0) * 12)}</div></div>
+            <div className="card stat"><div className="label">Cost / Year</div><div className="value debit">{money(s.yearly_amount)}</div></div>
             <div className="card stat">
               <div className="label">Next Due</div>
               {renews
