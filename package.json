@@ -1,6 +1,6 @@
 {
   "name": "finance-tracker",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "Self-hosted budgeting, receipt-level tracking, utilities, vehicle cost-of-ownership, and wealth tracking with AI analysis.",
   "scripts": {
