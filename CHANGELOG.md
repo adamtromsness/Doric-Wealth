@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Fixed
+- Errors like "AI is not configured…", SimpleFIN or RentCast being unreachable, and VIN lookup failures now show their actual message instead of "Internal error" (#1).
+- The Add Vehicle page no longer triggers a server error in the background, and invalid vehicle ids now return a clear "must be a positive integer id" error instead of a server error (#2).
+
 ## [1.2.0] - 2026-10-01
 
 ### Changed

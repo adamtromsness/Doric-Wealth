@@ -321,3 +321,22 @@ test('cross-book isolation for vehicle endpoints', async () => {
   assert.equal((await b.client.get(`/api/vehicles/${vehA}/maintenance`)).status, 404);
   assert.equal((await b.client.post(`/api/vehicles/${vehA}/maintenance`, { item: 'X' })).status, 404);
 });
+
+test('non-numeric vehicle ids are a clean 400, not a 500', async () => {
+  const { client } = await registerUser(base);
+  const v = (await client.post('/api/vehicles', { name: 'Daily Driver' })).body;
+
+  for (const path of ['/api/vehicles/NaN/summary', '/api/vehicles/new/values', '/api/vehicles/abc/insurance', `/api/vehicles/${v.id}/maintenance/xyz/documents`]) {
+    const r = await client.get(path);
+    assert.equal(r.status, 400, path);
+    assert.match(r.body.error, /must be a positive integer id/, path);
+  }
+  assert.equal((await client.put('/api/vehicles/abc', { name: 'x' })).status, 400);
+  assert.equal((await client.post('/api/analysis/vehicle/NaN/cost-of-ownership', {})).status, 400);
+  assert.equal((await client.post('/api/analysis/property/NaN/cost-of-ownership', {})).status, 400);
+
+  // Literal routes and real ids are unaffected by the id check.
+  assert.equal((await client.get('/api/vehicles/loan-accounts')).status, 200);
+  assert.equal((await client.get('/api/vehicles/miles-driven')).status, 200);
+  assert.equal((await client.get(`/api/vehicles/${v.id}/summary`)).status, 200);
+});

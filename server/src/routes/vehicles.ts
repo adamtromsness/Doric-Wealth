@@ -43,6 +43,14 @@ function validateVehicle(b: any): void {
 
 export const vehicles = Router();
 
+// Every id-style route param on this router is a positive integer. Reject anything
+// else (e.g. "NaN" from a client) with a clean 400 before it reaches SQL.
+for (const param of ['id', 'readingId', 'valueId', 'mid', 'docId', 'pid']) {
+  vehicles.param(param, (_req, _res, next, value) => {
+    try { integerId(value, param); next(); } catch (e) { next(e); }
+  });
+}
+
 // Confirm a vehicle belongs to the active book, or 404.
 async function ownedVehicle(req: any): Promise<number> {
   const v = await one<{ id: number }>(`SELECT id FROM vehicles WHERE id = $1 AND book_id = $2`, [req.params.id, hh(req)]);

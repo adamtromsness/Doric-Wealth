@@ -176,6 +176,13 @@ describe('VehicleDetail — load / error / new states', () => {
     expect(await screen.findByRole('heading', { name: 'Add Vehicle' })).toBeInTheDocument();
     expect(screen.getByText('New Vehicle')).toBeInTheDocument();
   });
+
+  it('does not request a summary (or any per-vehicle data) in new mode', async () => {
+    renderAt('/vehicles/new');
+    await screen.findByRole('heading', { name: 'Add Vehicle' });
+    const paths: string[] = (api.get as any).mock.calls.map((c: any[]) => c[0]);
+    expect(paths.filter((p) => /^\/vehicles\/(NaN|new)\b/.test(p))).toEqual([]);
+  });
 });
 
 describe('VehicleDetail — overview & analysis', () => {

@@ -191,7 +191,7 @@ export default function VehicleDetail() {
 
   // Maintenance edits happen in their own tab; refresh the summary (which includes
   // recorded maintenance cost, shown in the Overview's cost section) on Overview.
-  useEffect(() => { if (tab === 'overview') loadSummary(); }, [tab]);
+  useEffect(() => { if (!isNew && tab === 'overview') loadSummary(); }, [tab]);
 
   // A new/removed odometer reading changes the current odometer, which drives
   // miles-driven and cost-per-mile — so refresh the vehicle, summary, and list.
