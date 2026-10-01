@@ -39,7 +39,7 @@ interface AuthValue {
   books: Book[];
   activeBook: Book | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (input: { email: string; password: string; name?: string; book_name?: string }) => Promise<void>;
+  register: (input: { email: string; password: string; name?: string; book_name?: string; invite_code?: string }) => Promise<void>;
   logout: () => Promise<void>;
   switchBook: (id: number) => Promise<void>;
   acceptInvite: (code: string) => Promise<void>;

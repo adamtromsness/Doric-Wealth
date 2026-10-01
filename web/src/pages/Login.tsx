@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { api } from '../api';
 import { useAuth } from '../auth';
 import { Field } from '../components/ui';
 import { AuthShell } from '../components/AuthShell';
@@ -13,6 +14,12 @@ export default function Login() {
   const [password, setPassword] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [inviteOnly, setInviteOnly] = useState(false);
+  useEffect(() => {
+    api.get<{ invite_only: boolean; first_account: boolean }>('/auth/signup-config')
+      .then((c) => setInviteOnly(c.invite_only && !c.first_account))
+      .catch(() => {});
+  }, []);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,7 +41,8 @@ export default function Login() {
         </div>
       </form>
       <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
-        No account? <Link to={code ? `/register?code=${encodeURIComponent(code)}` : '/register'}>Create one</Link>
+        {inviteOnly && !code ? 'Have an invite? ' : 'No account? '}
+        <Link to={code ? `/register?code=${encodeURIComponent(code)}` : '/register'}>{inviteOnly && !code ? 'Create your account' : 'Create one'}</Link>
       </p>
     </AuthShell>
   );

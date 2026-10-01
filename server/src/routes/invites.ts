@@ -11,7 +11,7 @@ export const invites = Router();
 const inviteLimiter = rateLimit({ windowMs: 15 * 60_000, max: 30, keyPrefix: 'invite:', message: 'Too many invite attempts. Please wait and try again.' });
 invites.use(inviteLimiter);
 
-function inviteUsable(inv: any): boolean {
+export function inviteUsable(inv: any): boolean {
   if (!inv || inv.revoked) return false;
   if (inv.expires_at && new Date(inv.expires_at).getTime() < Date.now()) return false;
   if (inv.max_uses != null && inv.uses >= inv.max_uses) return false;

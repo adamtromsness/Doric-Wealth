@@ -10,6 +10,14 @@ vi.mock('../auth', () => ({
   displayName: (u: any) => u?.name ?? '',
 }));
 
+vi.mock('../api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../api')>();
+  return { ...actual, api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), del: vi.fn() } };
+});
+import { api } from '../api';
+const signupConfig = (invite_only: boolean, first_account = false) =>
+  (api.get as any).mockResolvedValue({ invite_only, first_account });
+
 const renderAt = (path = '/login') =>
   render(
     <MemoryRouter initialEntries={[path]}>
@@ -23,13 +31,27 @@ const renderAt = (path = '/login') =>
   );
 
 describe('Login page', () => {
-  beforeEach(() => { login.mockReset(); });
+  beforeEach(() => { login.mockReset(); signupConfig(false); });
 
   it('renders the sign-in form', () => {
     renderAt();
     expect(screen.getByRole('heading', { name: 'Sign in' })).toBeInTheDocument();
     expect(screen.getByText('Welcome back to Doric.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Create one' })).toHaveAttribute('href', '/register');
+  });
+
+  it('invite-only: the sign-up link says to use an invite', async () => {
+    signupConfig(true);
+    renderAt();
+    expect(await screen.findByRole('link', { name: 'Create your account' })).toHaveAttribute('href', '/register');
+    expect(screen.getByText(/Have an invite\?/)).toBeInTheDocument();
+  });
+
+  it('invite-only but empty database: the normal sign-up link', async () => {
+    signupConfig(true, true);
+    renderAt();
+    await waitFor(() => expect(api.get).toHaveBeenCalledWith('/auth/signup-config'));
+    expect(screen.getByRole('link', { name: 'Create one' })).toBeInTheDocument();
   });
 
   it('submits credentials and navigates home on success', async () => {

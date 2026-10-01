@@ -39,6 +39,11 @@ export const config = {
   // Trust the X-Forwarded-* headers from a single upstream proxy (ALB), so Secure
   // cookies and req.protocol work behind TLS termination. On by default in prod.
   trustProxy: (process.env.TRUST_PROXY ?? (process.env.NODE_ENV === 'production' ? 'true' : 'false')) === 'true',
+  // Who may register. 'invite': a signup or book invite code is required (except for
+  // the first account on an empty database). 'open': anyone can sign up. Defaults to
+  // invite-only in production and open otherwise (dev, tests); any other value fails
+  // closed to 'invite'.
+  signupMode: ((process.env.SIGNUP_MODE ?? (process.env.NODE_ENV === 'production' ? 'invite' : 'open')) === 'open' ? 'open' : 'invite') as 'open' | 'invite',
   // Public base URL of the app (e.g. https://ledger.example.com), used to build
   // shareable invite links. Unset = links are returned as a relative /accept path.
   appBaseUrl: process.env.APP_BASE_URL ?? '',
