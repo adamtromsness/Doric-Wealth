@@ -36,7 +36,7 @@ const CLEAR_UNSET: Record<string, undefined> = {
   APP_DATABASE_URL: undefined, DB_POOL_MAX: undefined, HOST: undefined,
   API_TOKEN: undefined, WEB_ORIGIN: undefined, COOKIE_SECURE: undefined,
   TRUST_PROXY: undefined, APP_BASE_URL: undefined, APP_SECRET_KEY: undefined,
-  NODE_ENV: undefined,
+  NODE_ENV: undefined, SIGNUP_MODE: undefined,
 };
 
 describe('config defaults for unset (non-.env) vars', () => {
@@ -56,6 +56,7 @@ describe('config defaults for unset (non-.env) vars', () => {
     assert.equal(config.cookieSecure, false);
     assert.equal(config.trustProxy, false);
     assert.equal(config.secretKey, 'dev-insecure-app-secret-change-me');
+    assert.equal(config.signupMode, 'open');
   });
 });
 
@@ -117,6 +118,13 @@ describe('config overrides (env set wins over defaults and .env)', () => {
     assert.equal(config.cookieSecure, true);
     assert.equal(config.trustProxy, true);
     assert.equal(config.secretKey, ''); // dev fallback NOT used in production
+    assert.equal(config.signupMode, 'invite');
+  });
+
+  it('SIGNUP_MODE overrides the default, and an unknown value fails closed to invite', async () => {
+    assert.equal((await loadConfig({ ...CLEAR_UNSET, NODE_ENV: 'production', SIGNUP_MODE: 'open' })).config.signupMode, 'open');
+    assert.equal((await loadConfig({ ...CLEAR_UNSET, NODE_ENV: 'development', SIGNUP_MODE: 'invite' })).config.signupMode, 'invite');
+    assert.equal((await loadConfig({ ...CLEAR_UNSET, NODE_ENV: 'development', SIGNUP_MODE: 'Open ' })).config.signupMode, 'invite');
   });
 
   it('production with APP_SECRET_KEY set uses it', async () => {

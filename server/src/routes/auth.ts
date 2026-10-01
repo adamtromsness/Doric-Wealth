@@ -3,8 +3,9 @@ import { one, query, withTransaction } from '../db.js';
 import { ah, require_, HttpError } from '../http.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, destroyOtherSessions,
-  SESSION_COOKIE, sessionCookieOptions,
+  SESSION_COOKIE, sessionCookieOptions, hashToken,
 } from '../auth.js';
+import { inviteUsable } from './invites.js';
 import { requireAuth, mePayload } from '../tenant.js';
 import { rateLimit } from '../rateLimit.js';
 import { config } from '../config.js';
@@ -36,7 +37,28 @@ const registerLimiter = rateLimit({ windowMs: 60 * 60_000, max: 10, keyPrefix: '
 // already authenticated (a stolen session shouldn't become a password oracle).
 const passwordLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, keyPrefix: 'password:', message: 'Too many password attempts. Please wait a few minutes and try again.' });
 
-// Register a new user, give them a brand-new book they own, and log them in.
+const INVALID_INVITE = 'This invite code is invalid, expired, or already used.';
+
+function signupInviteUsable(si: any): boolean {
+  if (!si || si.revoked_at || si.used_at) return false;
+  if (si.expires_at && new Date(si.expires_at).getTime() < Date.now()) return false;
+  return true;
+}
+
+// What the sign-up page needs to know before showing its form. first_account is true
+// only on an empty database, where the first registration needs no invite.
+auth.get(
+  '/signup-config',
+  ah(async (_req, res) => {
+    const anyUser = await one(`SELECT 1 FROM users LIMIT 1`);
+    res.json({ invite_only: config.signupMode === 'invite', first_account: !anyUser });
+  })
+);
+
+// Register a new user and log them in. With a book invite code they join that book;
+// otherwise they get a brand-new book they own. In invite-only mode (the production
+// default) a code is required: a signup invite (own books) or a book invite (join a
+// book). The first account on an empty database needs no code.
 auth.post(
   '/register',
   registerLimiter,
@@ -45,11 +67,9 @@ auth.post(
     const email = String(req.body.email).trim();
     const password = String(req.body.password);
     const name = req.body.name ? String(req.body.name).trim() : null;
+    const code = req.body.invite_code ? String(req.body.invite_code).trim() : '';
     if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Enter a valid email address.');
     if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
-
-    const exists = await one(`SELECT id FROM users WHERE lower(email) = lower($1)`, [email]);
-    if (exists) throw new HttpError(409, 'An account with that email already exists.');
 
     const { hash, salt } = hashPassword(password);
     const bookName = req.body.book_name
@@ -57,19 +77,51 @@ auth.post(
       : `${name || email.split('@')[0]}'s Book`;
 
     const { userId, bookId } = await withTransaction(async (client) => {
+      // Serialize registrations so the empty-database check and single-use codes
+      // can't race.
+      await client.query(`SELECT pg_advisory_xact_lock(hashtext('doric:register'))`);
+
+      const exists = (await client.query(`SELECT id FROM users WHERE lower(email) = lower($1)`, [email])).rows[0];
+      if (exists) throw new HttpError(409, 'An account with that email already exists.');
+
+      let signupInviteId: number | null = null;
+      let bookInvite: { id: number; book_id: number; role: string } | null = null;
+      if (code) {
+        const si = (await client.query(`SELECT * FROM signup_invites WHERE code_hash = $1 FOR UPDATE`, [hashToken(code)])).rows[0];
+        if (si) {
+          if (!signupInviteUsable(si)) throw new HttpError(400, INVALID_INVITE);
+          if (si.email && si.email.toLowerCase() !== email.toLowerCase()) {
+            throw new HttpError(400, 'This invite is for a different email address.');
+          }
+          signupInviteId = si.id;
+        } else {
+          const inv = (await client.query(`SELECT * FROM invites WHERE code = $1 FOR UPDATE`, [code])).rows[0];
+          if (!inviteUsable(inv)) throw new HttpError(400, INVALID_INVITE);
+          bookInvite = inv;
+        }
+      } else if (config.signupMode === 'invite') {
+        const anyUser = (await client.query(`SELECT 1 FROM users LIMIT 1`)).rows[0];
+        if (anyUser) throw new HttpError(403, 'Sign-up is by invitation only. Ask the person who runs Doric for an invite link.');
+      }
+
       const uid = (await client.query(
         `INSERT INTO users (email, name, password_hash, password_salt, last_login_at) VALUES ($1,$2,$3,$4, now()) RETURNING id`,
         [email, name, hash, salt]
       )).rows[0].id;
-      const hid = (await client.query(
-        `INSERT INTO books (name) VALUES ($1) RETURNING id`,
-        [bookName]
-      )).rows[0].id;
-      await client.query(
-        `INSERT INTO memberships (user_id, book_id, role) VALUES ($1,$2,'owner')`,
-        [uid, hid]
-      );
-      return { userId: uid, bookId: hid };
+
+      let bid: number;
+      if (bookInvite) {
+        bid = bookInvite.book_id;
+        await client.query(`INSERT INTO memberships (user_id, book_id, role) VALUES ($1,$2,$3)`, [uid, bid, bookInvite.role]);
+        await client.query(`UPDATE invites SET uses = uses + 1 WHERE id = $1`, [bookInvite.id]);
+      } else {
+        bid = (await client.query(`INSERT INTO books (name) VALUES ($1) RETURNING id`, [bookName])).rows[0].id;
+        await client.query(`INSERT INTO memberships (user_id, book_id, role) VALUES ($1,$2,'owner')`, [uid, bid]);
+      }
+      if (signupInviteId != null) {
+        await client.query(`UPDATE signup_invites SET used_at = now(), used_by = $2 WHERE id = $1`, [signupInviteId, uid]);
+      }
+      return { userId: uid, bookId: bid };
     });
 
     const token = await createSession(userId, bookId);
