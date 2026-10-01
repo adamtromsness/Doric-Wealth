@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-01
+
 ### Added
 - `CHANGELOG.md` and tagged releases (`scripts/release.sh`). The version in the top bar now changes with each release, and production deploys require a tagged release.
 
