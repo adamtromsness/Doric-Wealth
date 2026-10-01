@@ -163,6 +163,10 @@ body {
 .topbar-greeting strong { color: var(--ink); font-weight: 600; }
 .topbar-right { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
 .topbar-version { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+a.topbar-version { text-decoration: none; }
+a.topbar-version:hover { color: var(--brass-deep); text-decoration: underline; }
+.changelog a { color: var(--brass-deep); }
+.changelog a:hover { color: var(--bronze); }
 .usermenu { position: relative; }
 .usermenu-trigger {
   display: inline-flex;
