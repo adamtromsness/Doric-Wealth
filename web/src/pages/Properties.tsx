@@ -40,6 +40,11 @@ export interface Property {
   hoa_cycle: string | null;
   notes: string | null;
   disposed_at: string | null;
+  // Automatic RentCast value updates (see PropertyAutoValue).
+  auto_value_enabled?: boolean;
+  auto_value_frequency?: 'weekly' | 'monthly';
+  auto_value_last_success_at?: string | null;
+  auto_value_last_error?: string | null;
   disposal_type: string | null;
   disposal_amount: number | null;
   disposal_note: string | null;

@@ -69,7 +69,7 @@ describe('BackLink & Loading', () => {
 });
 
 describe('AmountInput', () => {
-  it('displays two decimals at rest, raw while focused, and normalizes on blur', async () => {
+  it('displays money format at rest, the plain number while focused, and normalizes on blur', async () => {
     const user = userEvent.setup();
     function Host() {
       const [v, setV] = useState('6');
@@ -77,13 +77,31 @@ describe('AmountInput', () => {
     }
     wrap(<Host />);
     const input = screen.getByLabelText('amt') as HTMLInputElement;
-    expect(input.value).toBe('6.00'); // at rest
+    expect(input.value).toBe('$6.00'); // at rest
     await user.click(input);
     expect(input.value).toBe('6'); // focused shows raw
     await user.clear(input);
     await user.type(input, '5.5');
     await user.tab(); // blur normalizes
-    expect(input.value).toBe('5.50');
+    expect(input.value).toBe('$5.50');
+  });
+  it('formats thousands and negatives, and reports the plain number', async () => {
+    const user = userEvent.setup();
+    const seen: string[] = [];
+    function Host() {
+      const [v, setV] = useState('127000');
+      return <AmountInput value={v} onChange={(x) => { seen.push(x); setV(x); }} aria-label="big" />;
+    }
+    wrap(<Host />);
+    const input = screen.getByLabelText('big') as HTMLInputElement;
+    expect(input.value).toBe('$127,000.00');
+    await user.click(input);
+    expect(input.value).toBe('127000');
+    await user.clear(input);
+    await user.type(input, '-1234.5');
+    await user.tab();
+    expect(input.value).toBe('\u2212$1,234.50');
+    expect(seen[seen.length - 1]).toBe('-1234.50');
   });
   it('keeps blank blank', () => {
     wrap(<AmountInput value="" onChange={() => {}} aria-label="amt2" />);

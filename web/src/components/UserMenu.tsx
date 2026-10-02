@@ -81,6 +81,7 @@ export function UserMenu() {
           <div className="usermenu-section">Integrations</div>
           <button className="usermenu-item" role="menuitem" onClick={() => go('/integrations/simplefin')}>SimpleFIN</button>
           <button className="usermenu-item" role="menuitem" onClick={() => go('/integrations/ai')}>AI</button>
+          <button className="usermenu-item" role="menuitem" onClick={() => go('/integrations/rentcast')}>RentCast</button>
           <div className="usermenu-divider" />
           <button className="usermenu-item danger" role="menuitem" onClick={() => { setOpen(false); logout(); }}>Sign out</button>
         </div>

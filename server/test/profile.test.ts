@@ -80,3 +80,25 @@ test('timezone round-trips through the profile and reaches /auth/me', async () =
   // The auth payload (used by the client to decide whether to auto-capture) carries it too.
   assert.equal((await client.get('/api/auth/me')).body.user.timezone, 'America/Los_Angeles');
 });
+
+test('dependant dates of birth: up to 120 years ago, never in the future', async () => {
+  const { client } = await registerUser(base);
+  const today = new Date();
+  const ymd = (y: number, m: number, d: number) => new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+  const [y, m, d] = [today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()];
+
+  const exactly120 = await client.post('/api/auth/dependants', { first_name: 'Elder', dob: ymd(y - 120, m, d) });
+  assert.equal(exactly120.status, 200);
+
+  const over = await client.post('/api/auth/dependants', { first_name: 'Too Old', dob: ymd(y - 121, m, d) });
+  assert.equal(over.status, 400);
+  assert.match(over.body.error, /more than 120 years ago/);
+
+  const future = await client.post('/api/auth/dependants', { first_name: 'Not Yet', dob: ymd(y + 1, m, d) });
+  assert.equal(future.status, 400);
+  assert.match(future.body.error, /future/);
+
+  // Edits are checked the same way.
+  const upd = await client.put(`/api/auth/dependants/${exactly120.body.id}`, { first_name: 'Elder', dob: ymd(y - 130, m, d) });
+  assert.equal(upd.status, 400);
+});

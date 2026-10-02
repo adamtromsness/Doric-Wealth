@@ -4,6 +4,7 @@ import { api, money, shortDate, todayStr, parseLocalDate, propertyTypeLabel, PRO
 import { AiOutput, BackLink, Field, AmountInput, EditorSection, Modal, Loading } from '../components/ui';
 import { type SnapItem } from '../components/SnapshotSection';
 import { SnapshotTab } from '../components/SnapshotTab';
+import { PropertyAutoValue } from './PropertyAutoValue';
 import { EntityDocuments } from '../components/EntityDocuments';
 import { EntityInsurance } from '../components/EntityInsurance';
 import { TxnEditor } from './transactions/TxnEditor';
@@ -213,8 +214,8 @@ export default function PropertyDetail() {
   if (p.hoa_dues != null) facts.push({ label: 'HOA Dues', value: `${money(p.hoa_dues)}${p.hoa_cycle ? `/${({ monthly: 'mo', quarterly: 'qtr', semiannual: '6mo', annual: 'yr' } as Record<string, string>)[p.hoa_cycle] ?? 'mo'}` : ''}` });
   if (p.txn_count > 0) facts.push({ label: 'Tagged Spending', value: `${money(p.total_spent)} · ${p.txn_count} txn` });
 
-  const addSnap = async (as_of: string, value: number) => {
-    await api.post(`/properties/${id}/values`, { as_of, value });
+  const addSnap = async (as_of: string, value: number, source: 'manual' | 'rentcast' | 'ai' = 'manual') => {
+    await api.post(`/properties/${id}/values`, { as_of, value, source });
     loadSnaps(); loadProperty(); loadSummary();
   };
   const delSnap = async (snapId: number) => {
@@ -230,7 +231,7 @@ export default function PropertyDetail() {
         square_feet: property.square_feet, lot_size_acres: property.lot_size_acres, year_built: property.year_built,
         purchase_price: property.purchase_price, purchase_date: property.purchase_date,
       });
-      await addSnap(todayStr(), est.value);
+      await addSnap(todayStr(), est.value, est.source === 'rentcast' ? 'rentcast' : 'ai');
       const range = est.low != null && est.high != null ? ` (range ${money(est.low)}–${money(est.high)})` : '';
       setEstimateMsg(`Estimated ${money(est.value)}${range}${est.source === 'rentcast' ? ' (RentCast)' : ' (AI estimate)'}.${est.rationale ? ' ' + est.rationale : ''}`);
     } catch (e: any) { setErr(e.message); }
@@ -409,6 +410,7 @@ export default function PropertyDetail() {
         <PropertyMaintenanceTab propertyId={id} onChanged={() => { loadSummary(); loadProperty(); }} />
       )}
 
+      {tab === 'snapshots' && !disposed && <PropertyAutoValue property={p} onChanged={loadProperty} />}
       {tab === 'snapshots' && (
         <SnapshotTab
           items={snaps}

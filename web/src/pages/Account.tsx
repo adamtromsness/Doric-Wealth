@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { api, shortDate } from '../api';
+import { api, shortDate, todayStr, ageOn, dobProblem, earliestDob } from '../api';
 import { useAuth } from '../auth';
-import { Field } from '../components/ui';
+import { Field, AmountInput } from '../components/ui';
 
 // My Profile: tabbed personal record (same shape as the account/vehicle/property
 // detail pages). The 1:1 sections share one form + a single top "Save Changes"
@@ -78,6 +78,8 @@ export default function Account() {
   const depStartEdit = (d: Dependant) => { setDepForm({ first_name: d.first_name ?? '', middle_name: d.middle_name ?? '', last_name: d.last_name ?? '', relationship: d.relationship ?? '', dob: d.dob ?? '', notes: d.notes ?? '' }); setDepEditId(d.id); };
   const depSave = async () => {
     if (!depForm.first_name.trim() && !depForm.last_name.trim()) { setErr('A dependant needs a first or last name.'); return; }
+    const dobErr = dobProblem(depForm.dob);
+    if (dobErr) { setErr(dobErr); return; }
     setDepBusy(true); setErr('');
     const payload = {
       first_name: depForm.first_name.trim() || null, middle_name: depForm.middle_name.trim() || null, last_name: depForm.last_name.trim() || null,
@@ -177,7 +179,7 @@ export default function Account() {
             <Field label="Industry"><input value={f.industry} onChange={(e) => set('industry', e.target.value)} /></Field>
             <Field label="Employed Since"><input type="date" value={f.employment_start} onChange={(e) => set('employment_start', e.target.value)} /></Field>
           </div>
-          <Field label="Annual Income"><input type="number" inputMode="decimal" value={f.annual_income} onChange={(e) => set('annual_income', e.target.value)} placeholder="e.g. 85000" /></Field>
+          <Field label="Annual Income"><AmountInput value={f.annual_income} onChange={(v) => set('annual_income', v)} placeholder="e.g. $85,000.00" /></Field>
         </div>
       )}
 
@@ -189,8 +191,8 @@ export default function Account() {
             <Field label="Target Retirement Date"><input type="date" value={f.target_retirement_date} onChange={(e) => set('target_retirement_date', e.target.value)} /></Field>
           </div>
           <div className="grid grid-2">
-            <Field label="Desired Monthly Income"><input type="number" inputMode="decimal" value={f.desired_monthly_income} onChange={(e) => set('desired_monthly_income', e.target.value)} placeholder="in retirement" /></Field>
-            <Field label="Monthly Contribution"><input type="number" inputMode="decimal" value={f.monthly_contribution} onChange={(e) => set('monthly_contribution', e.target.value)} placeholder="saved toward retirement" /></Field>
+            <Field label="Desired Monthly Income"><AmountInput value={f.desired_monthly_income} onChange={(v) => set('desired_monthly_income', v)} placeholder="in retirement" /></Field>
+            <Field label="Monthly Contribution"><AmountInput value={f.monthly_contribution} onChange={(v) => set('monthly_contribution', v)} placeholder="saved toward retirement" /></Field>
           </div>
           <Field label="Notes"><textarea value={f.retirement_notes} onChange={(e) => set('retirement_notes', e.target.value)} rows={3} placeholder="Goals, accounts, strategy…" /></Field>
         </div>
@@ -208,7 +210,7 @@ export default function Account() {
               </div>
               <div className="grid grid-2">
                 <Field label="Relationship"><input value={depForm.relationship} onChange={(e) => setDepForm({ ...depForm, relationship: e.target.value })} placeholder="e.g. Child" /></Field>
-                <Field label="Date of Birth"><input type="date" value={depForm.dob} onChange={(e) => setDepForm({ ...depForm, dob: e.target.value })} /></Field>
+                <Field label="Date of Birth"><input type="date" value={depForm.dob} min={earliestDob()} max={todayStr()} onChange={(e) => setDepForm({ ...depForm, dob: e.target.value })} /></Field>
               </div>
               <Field label="Notes"><input value={depForm.notes} onChange={(e) => setDepForm({ ...depForm, notes: e.target.value })} placeholder="(optional)" /></Field>
             </div>
@@ -218,7 +220,7 @@ export default function Account() {
           ) : (
             <table className="table" style={{ width: '100%' }}>
               <thead>
-                <tr><th style={{ textAlign: 'left' }}>Name</th><th style={{ textAlign: 'left' }}>Relationship</th><th style={{ textAlign: 'left' }}>Date of Birth</th><th></th></tr>
+                <tr><th style={{ textAlign: 'left' }}>Name</th><th style={{ textAlign: 'left' }}>Relationship</th><th style={{ textAlign: 'left' }}>Date of Birth</th><th style={{ textAlign: 'left' }}>Age</th><th></th></tr>
               </thead>
               <tbody>
                 {deps.map((d) => (
@@ -226,6 +228,7 @@ export default function Account() {
                     <td>{d.name}</td>
                     <td className="muted">{d.relationship || '—'}</td>
                     <td className="muted">{shortDate(d.dob)}</td>
+                    <td className="muted">{ageOn(d.dob) ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
                         <button className="ghost danger" style={{ padding: '4px 10px', fontSize: 12 }} disabled={depBusy} onClick={() => depRemove(d.id)}>Delete</button>

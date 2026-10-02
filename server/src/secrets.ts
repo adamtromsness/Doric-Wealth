@@ -29,3 +29,27 @@ export function decryptSecret(blob: string): string {
   decipher.setAuthTag(Buffer.from(tagB, 'base64'));
   return Buffer.concat([decipher.update(Buffer.from(ctB, 'base64')), decipher.final()]).toString('utf8');
 }
+
+// Third-party API keys a user or book saves (Anthropic, RentCast) are stored as
+// "enc1:" + encryptSecret(key). Values without the prefix are legacy plaintext, read
+// as is (and encrypted on boot where a migration helper exists).
+const KEY_PREFIX = 'enc1:';
+export const isEncryptedKey = (stored: string) => stored.startsWith(KEY_PREFIX);
+
+export function encodeKeyAtRest(plain: string): string {
+  return KEY_PREFIX + encryptSecret(plain);
+}
+
+// The usable key, or null when none is stored or it can't be decrypted (e.g. the
+// server's APP_SECRET_KEY changed since it was saved: the key must be re-entered).
+export function decodeKeyAtRest(stored: string | null | undefined, what = 'API key'): string | null {
+  const v = stored?.trim();
+  if (!v) return null;
+  if (!isEncryptedKey(v)) return v;
+  try {
+    return decryptSecret(v.slice(KEY_PREFIX.length));
+  } catch {
+    console.warn(`A stored ${what} could not be decrypted (APP_SECRET_KEY changed?); treating it as not set.`);
+    return null;
+  }
+}

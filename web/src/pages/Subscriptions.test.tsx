@@ -428,7 +428,7 @@ describe('SubscriptionEditor', () => {
     await userEvent.selectOptions(plan, 'Premium 4K');
     expect(screen.getByLabelText('Name')).toHaveValue('Netflix');
     expect(screen.getByLabelText('Tier / Plan')).toHaveValue('Premium 4K');
-    expect(screen.getByLabelText('Amount')).toHaveValue('24.99');
+    expect(screen.getByLabelText('Amount')).toHaveValue('$24.99');
     expect(screen.getByLabelText('Billing Cycle')).toHaveValue('monthly');
   });
 
@@ -437,7 +437,7 @@ describe('SubscriptionEditor', () => {
     await userEvent.selectOptions(screen.getByLabelText('Quick Fill from a Service (Optional)'), 'Costco');
     await userEvent.selectOptions(screen.getByLabelText('Plan'), 'Executive');
     // AmountInput normalizes a whole-dollar preset to two decimal places.
-    expect(screen.getByLabelText('Amount')).toHaveValue('130.00');
+    expect(screen.getByLabelText('Amount')).toHaveValue('$130.00');
     expect(screen.getByLabelText('Billing Cycle')).toHaveValue('yearly');
     expect(screen.getByLabelText('Type')).toHaveValue('membership');
   });

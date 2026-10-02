@@ -28,7 +28,7 @@ import { reminders } from './routes/reminders.js';
 import { tags } from './routes/tags.js';
 import { vehicles } from './routes/vehicles.js';
 import { assets } from './routes/assets.js';
-import { properties } from './routes/properties.js';
+import { properties, runDuePropertyValuesSafe } from './routes/properties.js';
 import { liabilities } from './routes/liabilities.js';
 import { networth } from './routes/networth.js';
 import { goals } from './routes/goals.js';
@@ -37,6 +37,7 @@ import { dashboard } from './routes/dashboard.js';
 import { connections, syncAllSimplefinLinksSafe } from './routes/connections.js';
 import { runDueBackupsSafe } from './routes/backup.js';
 import { encryptLegacyAiKeys } from './ai/aiKeys.js';
+import { integrations } from './routes/integrations.js';
 import { receiptItems } from './routes/receiptItems.js';
 import { todos } from './routes/todos.js';
 
@@ -112,6 +113,7 @@ app.use('/api/books', books);
 app.use('/api/imports', imports);
 app.use('/api/dashboard', dashboard);
 app.use('/api/connections', connections);
+app.use('/api/integrations', integrations);
 app.use('/api/accounts', accounts);
 app.use('/api/reconciliations', reconciliations);
 app.use('/api/categories', categories);
@@ -212,5 +214,10 @@ if (process.env.SERVER_NO_LISTEN !== '1') {
     // overdue for the current period are actually backed up (see runDueBackupsSafe).
     setTimeout(() => { runDueBackupsSafe(); }, 90_000).unref();
     setInterval(() => { runDueBackupsSafe(); }, CHECK_MS).unref();
+
+    // Automatic property value updates (RentCast), weekly or monthly per property.
+    // Each sweep only calls RentCast for properties that are actually due.
+    setTimeout(() => { runDuePropertyValuesSafe(); }, 120_000).unref();
+    setInterval(() => { runDuePropertyValuesSafe(); }, CHECK_MS).unref();
   });
 }
