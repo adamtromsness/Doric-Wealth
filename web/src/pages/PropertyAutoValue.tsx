@@ -25,13 +25,23 @@ export function PropertyAutoValue({ property, onChanged }: { property: Property;
   };
 
   const noKey = rc != null && !rc.configured;
+  const help = noKey && !enabled
+    ? <>Records a RentCast estimate as a value snapshot each week or month. Add a RentCast API key under <Link to="/integrations/rentcast">Integrations → RentCast</Link> to turn this on.</>
+    : enabled
+      ? (property.auto_value_last_success_at
+          ? `Last updated ${shortDate(property.auto_value_last_success_at)} from RentCast.`
+          : 'The first automatic update runs within the next hour.')
+      : 'Records a RentCast estimate as a value snapshot each week or month.';
   return (
     <div className="card" style={{ marginBottom: 16 }}>
-      <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <label className="row" style={{ gap: 8, alignItems: 'center', margin: 0, cursor: noKey && !enabled ? 'not-allowed' : 'pointer' }}>
+      <div className="row" style={{ gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label className={`check-card${enabled ? ' on' : ''}`} style={{ flex: 1, minWidth: 260, margin: 0, cursor: noKey && !enabled ? 'not-allowed' : 'pointer' }}>
           <input type="checkbox" checked={enabled} disabled={saving || (noKey && !enabled)}
             onChange={(e) => save({ enabled: e.target.checked, frequency })} />
-          <span className="label" style={{ margin: 0 }}>Update Value Automatically</span>
+          <span className="check-body">
+            <span className="check-title">Update Value Automatically</span>
+            <span className="check-help">{help}</span>
+          </span>
         </label>
         {enabled && (
           <select aria-label="Update Frequency" value={frequency} disabled={saving}
@@ -40,15 +50,6 @@ export function PropertyAutoValue({ property, onChanged }: { property: Property;
             <option value="weekly">Weekly</option>
           </select>
         )}
-      </div>
-      <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>
-        {noKey && !enabled
-          ? <>Records a RentCast estimate as a value snapshot each week or month. Add a RentCast API key under <Link to="/integrations/rentcast">Integrations → RentCast</Link> to turn this on.</>
-          : enabled
-            ? (property.auto_value_last_success_at
-                ? `Last updated ${shortDate(property.auto_value_last_success_at)} from RentCast.`
-                : 'The first automatic update runs within the next hour.')
-            : 'Records a RentCast estimate as a value snapshot each week or month.'}
       </div>
       {enabled && property.auto_value_last_error && (
         <div className="error" style={{ marginTop: 8, marginBottom: 0 }}>Couldn't update automatically: {property.auto_value_last_error}</div>
