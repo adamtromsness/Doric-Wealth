@@ -16,7 +16,7 @@ after(async () => { await stopServer(); });
 // branches of the connection routes can be exercised deterministically.
 async function seedLink(bookId: number, opts: {
   externalId?: string; accountId?: number | null; name?: string; balance?: number | null;
-  accessUrl?: string; autoImport?: boolean; autoImportEnabled?: boolean;
+  accessUrl?: string; autoImport?: boolean; autoImportEnabled?: boolean; currency?: string;
 } = {}) {
   const db = testDbClient();
   await db.connect();
@@ -30,8 +30,8 @@ async function seedLink(bookId: number, opts: {
     const ext = opts.externalId ?? 'ext-1';
     await db.query(
       `INSERT INTO account_links (book_id, link_id, external_account_id, name, org_name, currency, account_id, auto_import, last_balance, last_balance_date)
-       VALUES ($1,$2,$3,$4,'Test Bank','USD',$5,$6,$7, to_timestamp($8))`,
-      [bookId, link.id, ext, opts.name ?? 'SF Checking', opts.accountId ?? null, opts.autoImport ?? false, opts.balance ?? null, opts.balance != null ? 1700000000 : null]
+       VALUES ($1,$2,$3,$4,'Test Bank',$9,$5,$6,$7, to_timestamp($8))`,
+      [bookId, link.id, ext, opts.name ?? 'SF Checking', opts.accountId ?? null, opts.autoImport ?? false, opts.balance ?? null, opts.balance != null ? 1700000000 : null, opts.currency ?? 'USD']
     );
     return { linkId: link.id as number, externalId: ext };
   } finally {
@@ -409,5 +409,40 @@ test('syncAllSimplefinLinksSafe runs the schedule and records a per-link error',
     assert.equal(status, 'error');
   } finally {
     await db2.end();
+  }
+});
+
+// ── One supported currency (USD): foreign-currency accounts are refused, not summed ──
+test('a foreign-currency SimpleFIN account can be listed but not created, applied, or synced', async () => {
+  const { client, bookId } = await registerUser(base);
+  const { linkId, externalId } = await seedLink(bookId, { externalId: 'ext-eur', name: 'Euro Account', currency: 'EUR' });
+  const created = await client.post(`/api/connections/${linkId}/create-account`, { external_account_id: externalId });
+  assert.equal(created.status, 400);
+  assert.match(created.body.error, /in EUR.*US dollars \(USD\) only/);
+
+  // A USD account already mapped can't take EUR via the currency suggestion.
+  const acct = (await client.post('/api/accounts', { name: 'Chk', type: 'checking' })).body;
+  const usd = await seedLink(bookId, { externalId: 'ext-mixed', accountId: acct.id, currency: 'EUR' });
+  assert.equal((await client.post(`/api/connections/${usd.linkId}/apply-settings`, { external_account_id: 'ext-mixed', field: 'currency' })).status, 400);
+
+  // Syncing skips the EUR account (reported in account_errors) and imports the USD one.
+  const db = testDbClient();
+  await db.connect();
+  try {
+    await db.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
+    const payload: any[] = [
+      { org: { name: 'Bank' }, id: 'ext-usd', name: 'Checking', currency: 'USD', balance: '10', 'balance-date': 1700000000,
+        transactions: [{ id: 'usd-1', posted: 1700000000, amount: '-5.00', description: 'COFFEE' }] },
+      { org: { name: 'Bank' }, id: 'ext-eur2', name: 'Euro', currency: 'EUR', balance: '99', 'balance-date': 1700000000,
+        transactions: [{ id: 'eur-1', posted: 1700000000, amount: '-50.00', description: 'CAFE' }] },
+    ];
+    const eurAcct = (await client.post('/api/accounts', { name: 'Euro (manual)', type: 'checking' })).body;
+    const mapByExt = new Map<string, number>([['ext-usd', acct.id], ['ext-eur2', eurAcct.id]]);
+    const r = await applySimplefinSync(db as any, bookId, linkId, payload, mapByExt, null);
+    assert.equal(r.added, 1, 'only the USD transaction is staged');
+    const link = (await db.query(`SELECT account_errors FROM institution_links WHERE id = $1`, [linkId])).rows[0];
+    assert.ok(link.account_errors.some((e: string) => /Euro is in EUR/.test(e)));
+  } finally {
+    await db.end();
   }
 });

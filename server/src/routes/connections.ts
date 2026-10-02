@@ -5,12 +5,12 @@
 // All routes are owner/admin-only (requireManager): a bank feed is an account-wide
 // capability, like backup/restore — not something an individual member sets up.
 import { Router } from 'express';
-import { query, one, withTransaction, pool } from '../db.js';
+import { query, one, withTransaction, withBookContext, pool } from '../db.js';
 import { ah, HttpError } from '../http.js';
 import { hh, requireManager } from '../tenant.js';
 import { encryptSecret, decryptSecret } from '../secrets.js';
 import { claimAccessUrl, fetchAccounts, type SfAccount, type SfHolding } from '../simplefin.js';
-import { integerId, optionalIntegerId, booleanValue, optionalDateOnly, enumValue, round2 } from '../validation.js';
+import { integerId, optionalIntegerId, booleanValue, optionalDateOnly, enumValue, round2, supportedCurrency, isSupportedCurrency } from '../validation.js';
 import { dateInTz } from '../dates.js';
 import { cleanMerchant, setImportStatus, autoLinkTransferRules } from './imports.js';
 
@@ -262,6 +262,14 @@ export async function applySimplefinSync(
   // flag any that have stopped appearing.
   await upsertAccountLinks(client, bookId, linkId, accounts);
   await markAbsentLinks(client, bookId, linkId, accounts.map((a) => a.id));
+  // Only USD accounts are synced (see SUPPORTED_CURRENCY); a mapped account in another
+  // currency is skipped and reported, not imported as if it were dollars.
+  const foreign = accounts.filter((a) => !isSupportedCurrency(a.currency));
+  if (foreign.length) {
+    errors = [...errors, ...foreign.filter((a) => mapByExt.has(a.id))
+      .map((a) => `${a.name ?? a.id} is in ${a.currency}; Doric supports USD only, so it wasn't synced.`)];
+    accounts = accounts.filter((a) => isSupportedCurrency(a.currency));
+  }
   const batch = (await client.query(
     `INSERT INTO import_batches (book_id, account_id, filename, source, total_rows, created_by)
      VALUES ($1, NULL, 'SimpleFIN sync', 'simplefin', 0, $2) RETURNING id`,
@@ -283,17 +291,10 @@ export async function applySimplefinSync(
 // `books` is not under RLS (an identity table), so we enumerate it directly,
 // then set app.book_id per book to read/write that tenant's rows.
 
-async function withBookTx<T>(bookId: number, fn: (client: any) => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
-    await client.query('BEGIN');
-    try { const r = await fn(client); await client.query('COMMIT'); return r; }
-    catch (e) { await client.query('ROLLBACK'); throw e; }
-  } finally {
-    await client.query('RESET ALL').catch(() => {});
-    client.release();
-  }
+// One transaction in the book's tenant context, with query()/one() inside bound to the
+// same connection (see withBookContext), so shared helpers stay tenant-scoped too.
+function withBookTx<T>(bookId: number, fn: (client: any) => Promise<T>): Promise<T> {
+  return withBookContext(bookId, fn);
 }
 
 async function markLinkError(bookId: number, linkId: number, e: any): Promise<void> {
@@ -312,22 +313,14 @@ async function syncBookLinks(bookId: number): Promise<void> {
   // Read this book's auto-import-enabled links with their schedule anchor; "due"
   // is computed in JS against the start time + frequency so the schedule fires aligned
   // to the user's chosen time-of-day. Network fetch happens after (no connection held).
-  let links: any[] = [];
-  const reader = await pool.connect();
-  try {
-    await reader.query(`SELECT set_config('app.book_id', $1, true)`, [String(bookId)]);
-    links = (await reader.query(
+  const links: any[] = await withBookContext(bookId, async (reader) => (await reader.query(
       `SELECT id, access_url_enc, include_pending, auto_import_frequency,
               EXTRACT(EPOCH FROM last_synced_at)::bigint AS last_synced_epoch,
               EXTRACT(EPOCH FROM COALESCE(auto_import_start_at, created_at))::bigint AS start_epoch
          FROM institution_links
         WHERE book_id = $1 AND status <> 'revoked' AND auto_import_enabled = true`,
       [bookId]
-    )).rows;
-  } finally {
-    await reader.query('RESET ALL').catch(() => {});
-    reader.release();
-  }
+    )).rows, { readOnly: true });
 
   const nowS = Math.floor(Date.now() / 1000);
   // A link is due if we're past its start and haven't synced since the most recent
@@ -501,7 +494,7 @@ connections.post('/:id/create-account', ah(async (req, res) => {
     const acct = (await client.query(
       `INSERT INTO accounts (book_id, name, type, institution, currency, is_liability)
             VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [bookId, name, type, link.org_name ?? null, link.currency ?? 'USD', LIABILITY_TYPES.has(type)]
+      [bookId, name, type, link.org_name ?? null, supportedCurrency(link.currency), LIABILITY_TYPES.has(type)]
     )).rows[0];
     await client.query(
       `UPDATE account_links SET account_id = $1 WHERE link_id = $2 AND external_account_id = $3 AND book_id = $4`,
@@ -536,7 +529,7 @@ connections.post('/:id/apply-settings', ah(async (req, res) => {
     if (!link.account_id) throw new HttpError(400, 'This external account is not linked to an account yet.');
 
     if (field) {
-      const value = field === 'name' ? link.name : field === 'institution' ? link.org_name : link.currency;
+      const value = field === 'name' ? link.name : field === 'institution' ? link.org_name : supportedCurrency(link.currency);
       const acct = (await client.query(
         `UPDATE accounts SET ${FIELD_COL[field]} = $3 WHERE id = $1 AND book_id = $2 RETURNING *`,
         [link.account_id, bookId, value ?? null]
@@ -548,7 +541,7 @@ connections.post('/:id/apply-settings', ah(async (req, res) => {
     // No field → apply all settings + record the balance (legacy whole-account update).
     // Only overwrite name when SimpleFIN actually reported one (older links may lack it).
     const sets = ['institution = $2', 'currency = COALESCE($3, currency)'];
-    const vals: any[] = [link.account_id, link.org_name ?? null, link.currency ?? null];
+    const vals: any[] = [link.account_id, link.org_name ?? null, link.currency == null ? null : supportedCurrency(link.currency)];
     if (link.name) { vals.push(link.name); sets.push(`name = $${vals.length}`); }
     vals.push(bookId);
     const acct = (await client.query(

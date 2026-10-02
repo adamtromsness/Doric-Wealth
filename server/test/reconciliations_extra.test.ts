@@ -67,11 +67,11 @@ test('PUT /reconciliations/:id: status transitions stamp/clear completed_at; bad
   // Invalid status → 400.
   assert.equal((await client.put(`/api/reconciliations/${s.id}`, { status: 'bogus' })).status, 400);
 
-  // Complete → completed_at stamped.
-  const completed = (await client.put(`/api/reconciliations/${s.id}`, { status: 'completed', statement_balance: 5000 })).body;
+  // Complete (statement matches: nothing cleared, opening 0) → completed_at stamped.
+  const completed = (await client.put(`/api/reconciliations/${s.id}`, { status: 'completed', statement_balance: 0, statement_end: '2026-06-30' })).body;
   assert.equal(completed.status, 'completed');
   assert.ok(completed.completed_at, 'completing stamps completed_at');
-  assert.equal(Number(completed.statement_balance), 5000);
+  assert.equal(Number(completed.statement_balance), 0);
 
   // Reopen → completed_at cleared.
   const reopened = (await client.put(`/api/reconciliations/${s.id}`, { status: 'open' })).body;

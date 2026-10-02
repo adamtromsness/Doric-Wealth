@@ -16,6 +16,20 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ### Changed
 - **Add Transaction** now puts the cursor in the Amount field, so you can start typing the amount right away (#5).
+- Doric supports **US dollars only**. Accounts in other currencies are refused instead of being added up as if they were dollars, and foreign-currency bank accounts linked through SimpleFIN aren't synced (the link shows why).
+- Reconciliations (not shown in the app yet) can only be completed when the cleared balance matches the statement. A completed reconciliation and the transactions in it are locked until it's reopened, and every completion and reopening is recorded.
+
+### Fixed
+- Account balances now include purchases that posted after a balance snapshot, even when they were made before it. Before, those purchases were left out of the balance.
+- Scheduled backups now run and capture your data. Before, they never ran with production settings.
+- Restoring a backup now works with production settings. Before, it failed.
+- Scheduled SimpleFIN imports now find your linked accounts with production settings.
+- Confirming the same suggested transfer twice at the same moment no longer creates two transfers.
+- Backups and exports are taken from one consistent moment, so edits made while one is running can't produce a mismatched file.
+
+### Security
+- Personal Anthropic API keys are now encrypted in the database. Keys saved before this are encrypted automatically.
+- Updated dependencies (including React Router 7) to clear known advisories.
 
 ## [1.4.0] - 2026-10-01
 

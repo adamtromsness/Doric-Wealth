@@ -51,3 +51,42 @@ test('dismissing a transfer suggestion stops it re-surfacing', async () => {
   await client.post('/api/transactions/transfer-suggestions/ignore', { out_id: sugg[0].out.id, in_id: sugg[0].in.id });
   assert.equal((await client.get('/api/transactions/transfer-suggestions')).body.length, 0, 'dismissed pair no longer suggested');
 });
+
+test('simultaneous confirmations of the same pair create exactly one transfer', async () => {
+  const { client } = await registerUser(base);
+  const a = (await client.post('/api/accounts', { name: 'Checking', type: 'checking', opening_balance: 0 })).body.id;
+  const b = (await client.post('/api/accounts', { name: 'Savings', type: 'savings', opening_balance: 0 })).body.id;
+  const out = (await client.post('/api/transactions', { amount: 250, account_id: a, direction: 'expense', txn_date: '2026-09-10', posted_date: '2026-09-10' })).body;
+  const inn = (await client.post('/api/transactions', { amount: 250, account_id: b, direction: 'income', txn_date: '2026-09-10', posted_date: '2026-09-10' })).body;
+
+  const results = await Promise.all([1, 2, 3].map(() =>
+    client.post('/api/transactions/transfer-suggestions/confirm', { out_id: out.id, in_id: inn.id })));
+  const statuses = results.map((r) => r.status).sort();
+  assert.deepEqual(statuses, [201, 409, 409]);
+
+  const listed = (await client.get('/api/transactions?limit=100')).body;
+  const all = [...listed.posted, ...listed.pending];
+  assert.equal(all.filter((t: any) => t.direction === 'transfer').length, 1, 'one transfer');
+  assert.equal(all.length, 1, 'the two originals are gone');
+});
+
+test('simultaneous confirmations of two pairs sharing a transaction: only one wins', async () => {
+  const { client } = await registerUser(base);
+  const a = (await client.post('/api/accounts', { name: 'Checking', type: 'checking', opening_balance: 0 })).body.id;
+  const b = (await client.post('/api/accounts', { name: 'Savings', type: 'savings', opening_balance: 0 })).body.id;
+  const c = (await client.post('/api/accounts', { name: 'Brokerage', type: 'brokerage', opening_balance: 0 })).body.id;
+  const out = (await client.post('/api/transactions', { amount: 75, account_id: a, direction: 'expense', txn_date: '2026-09-10', posted_date: '2026-09-10' })).body;
+  const in1 = (await client.post('/api/transactions', { amount: 75, account_id: b, direction: 'income', txn_date: '2026-09-10', posted_date: '2026-09-10' })).body;
+  const in2 = (await client.post('/api/transactions', { amount: 75, account_id: c, direction: 'income', txn_date: '2026-09-10', posted_date: '2026-09-10' })).body;
+
+  const [r1, r2] = await Promise.all([
+    client.post('/api/transactions/transfer-suggestions/confirm', { out_id: out.id, in_id: in1.id }),
+    client.post('/api/transactions/transfer-suggestions/confirm', { out_id: out.id, in_id: in2.id }),
+  ]);
+  assert.deepEqual([r1.status, r2.status].sort(), [201, 409]);
+
+  const listed = (await client.get('/api/transactions?limit=100')).body;
+  const all = [...listed.posted, ...listed.pending];
+  assert.equal(all.filter((t: any) => t.direction === 'transfer').length, 1);
+  assert.equal(all.filter((t: any) => t.direction === 'income').length, 1, 'the losing income is untouched');
+});

@@ -1,11 +1,15 @@
 // Integration-test harness. Importing this module configures the environment so
 // that when the Express app is later imported it talks to the test database and
 // does NOT bind its own port (the harness mounts it on an ephemeral port instead).
-import { TEST_DATABASE_URL, adminUrl, assertSafeDbName, swapDbUrl } from './config.js';
+import { TEST_DATABASE_URL, adminUrl, assertSafeDbName, swapDbUrl, restrictedTestUrl } from './config.js';
 
 // Must be set BEFORE the app (and its config/db modules) are imported.
 process.env.DATABASE_URL = TEST_DATABASE_URL;
-process.env.APP_DATABASE_URL = TEST_DATABASE_URL;
+// The app's own connections (requests, background jobs) use the privileged role by
+// default. TEST_RESTRICTED_ROLE=1 makes them use a restricted role instead, like
+// production, so row-level security is enforced (set it before importing this module).
+export const RESTRICTED = process.env.TEST_RESTRICTED_ROLE === '1';
+process.env.APP_DATABASE_URL = RESTRICTED ? restrictedTestUrl() : TEST_DATABASE_URL;
 process.env.COOKIE_SECURE = 'false';
 process.env.HOST = '127.0.0.1';
 process.env.SERVER_NO_LISTEN = '1';

@@ -188,9 +188,9 @@ test('POST /products analyzes itemized receipts when present', async () => {
       [txnId, bookId]
     )).rows[0];
     await db.query(
-      `INSERT INTO receipt_items (receipt_id, name, product_category, quantity, unit_price, total_price)
-       VALUES ($1,'Milk','dairy',2,3.50,7.00), ($1,'Bread','bakery',1,2.00,2.00)`,
-      [rec.id]
+      `INSERT INTO receipt_items (receipt_id, name, product_category, quantity, unit_price, total_price, book_id)
+       VALUES ($1,'Milk','dairy',2,3.50,7.00,$2), ($1,'Bread','bakery',1,2.00,2.00,$2)`,
+      [rec.id, bookId]
     );
   } finally { await db.end(); }
 

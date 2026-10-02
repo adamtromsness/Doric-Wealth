@@ -55,8 +55,13 @@ export const EFFECTIVE_LINE_TAGS = `
 // account's opening_balance when there are no snapshots. Balance = anchor +
 // (liability ? -1 : 1) * Σ signed deltas for transactions AFTER the anchor date
 // (income = +amount, expense/transfer-out = -amount, transfer-in = +amount).
-//   posted_balance  = anchor + posted deltas dated AFTER the anchor (cleared since
-//                     the snapshot; ones on/before are already reflected in it).
+//   posted_balance  = anchor + deltas POSTED after the anchor date. A snapshot is a
+//                     cleared balance, so it reflects what had posted by its date:
+//                     a purchase made before the snapshot that posts after it is not
+//                     in it and must count. The cutoff is the posting date, not the
+//                     purchase date. Posted on the anchor date counts as already in
+//                     the snapshot (dates carry no time of day, so this is the
+//                     convention for same-day postings, including imported snapshots).
 //   pending_balance = posted_balance + ALL not-yet-posted deltas (any date) — an
 //                     un-posted transaction hasn't cleared, so it isn't in the
 //                     snapshot regardless of its date.
@@ -74,17 +79,17 @@ export const ACCOUNT_BALANCES = `
     ) anc
     LEFT JOIN LATERAL (
       SELECT
-        COALESCE(SUM(delta) FILTER (WHERE is_posted AND (anc.dt IS NULL OR txn_date > anc.dt)), 0) AS posted,
+        COALESCE(SUM(delta) FILTER (WHERE is_posted AND (anc.dt IS NULL OR posted_date > anc.dt)), 0) AS posted,
         COALESCE(SUM(delta) FILTER (WHERE NOT is_posted), 0) AS pending_extra
       FROM (
-        SELECT (t.posted_date IS NOT NULL) AS is_posted, t.txn_date,
+        SELECT (t.posted_date IS NOT NULL) AS is_posted, t.posted_date,
                CASE t.direction WHEN 'income' THEN t.amount ELSE -t.amount END AS delta
         FROM transactions t WHERE t.account_id = a.id AND t.book_id = a.book_id
         UNION ALL
         -- Transfer in: only the principal portion reduces a loan. With a split
         -- breakdown, that's the sum of the lines flagged is_principal; otherwise
         -- the legacy principal_amount, or the full amount for a plain transfer.
-        SELECT (t.posted_date IS NOT NULL) AS is_posted, t.txn_date,
+        SELECT (t.posted_date IS NOT NULL) AS is_posted, t.posted_date,
                CASE
                  WHEN EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id = t.id AND s.book_id = t.book_id)
                    THEN COALESCE((SELECT SUM(s.amount) FROM transaction_splits s WHERE s.transaction_id = t.id AND s.book_id = t.book_id AND s.is_principal), 0)

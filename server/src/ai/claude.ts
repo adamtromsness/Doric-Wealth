@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { one } from '../db.js';
+import { decodeAiKey } from './aiKeys.js';
 
 // Hard ceiling on an Anthropic call. Generous (vision + large outputs are slow)
 // but finite, so a hung upstream can't hold a request — and its DB connection —
@@ -23,7 +24,8 @@ export async function resolveAiCreds(): Promise<{ apiKey: string; model: string 
     const row = await one<{ ai_api_key: string | null; ai_model: string | null }>(
       `SELECT ai_api_key, ai_model FROM users WHERE id = current_setting('app.user_id', true)::int`
     );
-    if (row?.ai_api_key && row.ai_api_key.trim()) apiKey = row.ai_api_key.trim();
+    const personal = decodeAiKey(row?.ai_api_key);
+    if (personal) apiKey = personal;
     if (row?.ai_model && row.ai_model.trim()) model = row.ai_model.trim();
   } catch { /* no tenant context (or column missing) — fall back to env */ }
   return { apiKey, model };
