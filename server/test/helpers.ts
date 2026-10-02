@@ -15,6 +15,26 @@ process.env.HOST = '127.0.0.1';
 process.env.SERVER_NO_LISTEN = '1';
 // Tests register many users per process; the auth limiter would otherwise 429.
 process.env.DISABLE_RATE_LIMIT = '1';
+// Never use a developer's real third-party keys from .env (dotenv doesn't override a
+// variable that's already set, even to ''). Tests that need a key set one explicitly.
+process.env.ANTHROPIC_API_KEY = '';
+process.env.RENTCAST_API_KEY = '';
+
+// No real outside network in tests. Requests to this machine (the in-process app)
+// pass through; anything else must be answered by a test's stub (setExternalFetch),
+// or it fails like an unreachable host. Real calls cost money, burn API quotas, and
+// make tests depend on the internet.
+const LOCAL_FETCH_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
+const realFetch = globalThis.fetch;
+let externalFetch: ((url: string, init?: RequestInit) => Promise<Response> | Response) | null = null;
+export function setExternalFetch(fn: typeof externalFetch): void { externalFetch = fn; }
+globalThis.fetch = (async (input: any, init?: any) => {
+  const url = typeof input === 'string' ? input : (input?.url ?? String(input));
+  const host = new URL(url).hostname;
+  if (LOCAL_FETCH_HOSTS.has(host)) return realFetch(input, init);
+  if (externalFetch) return externalFetch(url, init);
+  throw new TypeError(`fetch failed: external network is blocked in tests (${host}). Stub it with setExternalFetch.`);
+}) as typeof fetch;
 
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
