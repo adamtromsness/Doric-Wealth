@@ -269,3 +269,30 @@ describe('apiBlob & apiDownload', () => {
     await expect(apiDownload('/export', 'fallback.csv')).rejects.toThrow('Download failed (500)');
   });
 });
+
+describe('ages and dates of birth', async () => {
+  const { ageOn, dobProblem, earliestDob, MAX_AGE_YEARS } = await import('./api');
+
+  it('ageOn counts a birthday only once it has passed', () => {
+    expect(ageOn('2015-06-01', '2026-05-31')).toBe(10);
+    expect(ageOn('2015-06-01', '2026-06-01')).toBe(11);
+    expect(ageOn('2020-02-29', '2026-02-28')).toBe(5);
+    expect(ageOn(null, '2026-01-01')).toBeNull();
+    expect(ageOn('not a date', '2026-01-01')).toBeNull();
+    expect(ageOn('2030-01-01', '2026-01-01')).toBeNull();
+  });
+
+  it('dobProblem allows up to 120 years and rejects older or future dates', () => {
+    expect(MAX_AGE_YEARS).toBe(120);
+    expect(dobProblem('', '2026-10-02')).toBeNull();
+    expect(dobProblem('1906-10-02', '2026-10-02')).toBeNull(); // exactly 120
+    expect(dobProblem('1905-10-03', '2026-10-02')).toBeNull(); // still 120
+    expect(dobProblem('1905-10-02', '2026-10-02')).toMatch(/more than 120 years/); // 121
+    expect(dobProblem('2026-10-03', '2026-10-02')).toMatch(/future/);
+  });
+
+  it('earliestDob is the oldest date of birth still allowed', () => {
+    expect(earliestDob('2026-10-02')).toBe('1905-10-03');
+    expect(dobProblem(earliestDob('2026-10-02'), '2026-10-02')).toBeNull();
+  });
+});

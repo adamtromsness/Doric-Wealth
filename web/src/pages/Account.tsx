@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, shortDate } from '../api';
+import { api, shortDate, todayStr, ageOn, dobProblem, earliestDob } from '../api';
 import { useAuth } from '../auth';
 import { Field } from '../components/ui';
 
@@ -78,6 +78,8 @@ export default function Account() {
   const depStartEdit = (d: Dependant) => { setDepForm({ first_name: d.first_name ?? '', middle_name: d.middle_name ?? '', last_name: d.last_name ?? '', relationship: d.relationship ?? '', dob: d.dob ?? '', notes: d.notes ?? '' }); setDepEditId(d.id); };
   const depSave = async () => {
     if (!depForm.first_name.trim() && !depForm.last_name.trim()) { setErr('A dependant needs a first or last name.'); return; }
+    const dobErr = dobProblem(depForm.dob);
+    if (dobErr) { setErr(dobErr); return; }
     setDepBusy(true); setErr('');
     const payload = {
       first_name: depForm.first_name.trim() || null, middle_name: depForm.middle_name.trim() || null, last_name: depForm.last_name.trim() || null,
@@ -208,7 +210,7 @@ export default function Account() {
               </div>
               <div className="grid grid-2">
                 <Field label="Relationship"><input value={depForm.relationship} onChange={(e) => setDepForm({ ...depForm, relationship: e.target.value })} placeholder="e.g. Child" /></Field>
-                <Field label="Date of Birth"><input type="date" value={depForm.dob} onChange={(e) => setDepForm({ ...depForm, dob: e.target.value })} /></Field>
+                <Field label="Date of Birth"><input type="date" value={depForm.dob} min={earliestDob()} max={todayStr()} onChange={(e) => setDepForm({ ...depForm, dob: e.target.value })} /></Field>
               </div>
               <Field label="Notes"><input value={depForm.notes} onChange={(e) => setDepForm({ ...depForm, notes: e.target.value })} placeholder="(optional)" /></Field>
             </div>
@@ -218,7 +220,7 @@ export default function Account() {
           ) : (
             <table className="table" style={{ width: '100%' }}>
               <thead>
-                <tr><th style={{ textAlign: 'left' }}>Name</th><th style={{ textAlign: 'left' }}>Relationship</th><th style={{ textAlign: 'left' }}>Date of Birth</th><th></th></tr>
+                <tr><th style={{ textAlign: 'left' }}>Name</th><th style={{ textAlign: 'left' }}>Relationship</th><th style={{ textAlign: 'left' }}>Date of Birth</th><th style={{ textAlign: 'left' }}>Age</th><th></th></tr>
               </thead>
               <tbody>
                 {deps.map((d) => (
@@ -226,6 +228,7 @@ export default function Account() {
                     <td>{d.name}</td>
                     <td className="muted">{d.relationship || '—'}</td>
                     <td className="muted">{shortDate(d.dob)}</td>
+                    <td className="muted">{ageOn(d.dob) ?? '—'}</td>
                     <td style={{ textAlign: 'right' }}>
                       <div className="row" style={{ gap: 8, justifyContent: 'flex-end' }}>
                         <button className="ghost danger" style={{ padding: '4px 10px', fontSize: 12 }} disabled={depBusy} onClick={() => depRemove(d.id)}>Delete</button>

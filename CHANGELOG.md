@@ -21,6 +21,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 ## [1.5.0] - 2026-10-02
 
 ### Changed
+- **My Profile → Dependants** shows each dependant's age, and a date of birth can't be in the future or more than 120 years ago (#6).
 - **Add Transaction** now puts the cursor in the Amount field, so you can start typing the amount right away (#5).
 - Doric supports **US dollars only**. Accounts in other currencies are refused instead of being added up as if they were dollars, and foreign-currency bank accounts linked through SimpleFIN aren't synced (the link shows why).
 - Reconciliations (not shown in the app yet) can only be completed when the cleared balance matches the statement. A completed reconciliation and the transactions in it are locked until it's reopened, and every completion and reopening is recorded.

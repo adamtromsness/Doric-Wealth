@@ -234,6 +234,22 @@ const dateOrNull = (v: any, field = 'Date'): string | null => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || Number.isNaN(Date.parse(s))) throw new HttpError(400, `${field} must be a valid date.`);
   return s;
 };
+// Oldest age a person can be entered with; dates of birth beyond it, or in the
+// future, are rejected (they're typos, and would distort age-based figures).
+const MAX_AGE_YEARS = 120;
+function ageOn(dob: string, today: string): number {
+  const [by, bm, bd] = dob.split('-').map(Number);
+  const [ty, tm, td] = today.split('-').map(Number);
+  return ty - by - (tm < bm || (tm === bm && td < bd) ? 1 : 0);
+}
+const birthDateOrNull = (v: any, field = 'Date of birth'): string | null => {
+  const s = dateOrNull(v, field);
+  if (!s) return null;
+  const today = new Date().toISOString().slice(0, 10);
+  if (s > today) throw new HttpError(400, `${field} can't be in the future.`);
+  if (ageOn(s, today) > MAX_AGE_YEARS) throw new HttpError(400, `${field} can't be more than ${MAX_AGE_YEARS} years ago.`);
+  return s;
+};
 const coerceField = (type: string, v: any, field: string): any => {
   const s = strOrNull(v); if (s == null) return null;
   if (type === 'text') return s;
@@ -313,7 +329,7 @@ auth.post(
     const row = await one(
       `INSERT INTO user_dependants (user_id, first_name, middle_name, last_name, name, relationship, dob, notes)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING ${DEP_COLS}`,
-      [req.user!.id, first, middle, last, name, strOrNull(req.body?.relationship), dateOrNull(req.body?.dob, 'Date of birth'), strOrNull(req.body?.notes)]
+      [req.user!.id, first, middle, last, name, strOrNull(req.body?.relationship), birthDateOrNull(req.body?.dob), strOrNull(req.body?.notes)]
     );
     res.json(row);
   })
@@ -328,7 +344,7 @@ auth.put(
     const row = await one(
       `UPDATE user_dependants SET first_name = $3, middle_name = $4, last_name = $5, name = $6, relationship = $7, dob = $8, notes = $9
         WHERE id = $1 AND user_id = $2 RETURNING ${DEP_COLS}`,
-      [id, req.user!.id, first, middle, last, name, strOrNull(req.body?.relationship), dateOrNull(req.body?.dob, 'Date of birth'), strOrNull(req.body?.notes)]
+      [id, req.user!.id, first, middle, last, name, strOrNull(req.body?.relationship), birthDateOrNull(req.body?.dob), strOrNull(req.body?.notes)]
     );
     if (!row) throw new HttpError(404, 'Dependant not found.');
     res.json(row);

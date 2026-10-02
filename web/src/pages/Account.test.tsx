@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Account from './Account';
@@ -8,7 +8,7 @@ vi.mock('../api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../api')>();
   return { ...actual, api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), patch: vi.fn(), del: vi.fn() } };
 });
-import { api } from '../api';
+import { api, ageOn, earliestDob, todayStr } from '../api';
 
 const refresh = vi.fn();
 vi.mock('../auth', () => ({
@@ -109,6 +109,32 @@ describe('Account page', () => {
       await user.click(screen.getByRole('button', { name: 'Save Changes' }));
       await waitFor(() => expect(api.post).toHaveBeenCalledWith('/auth/dependants', expect.objectContaining({ first_name: 'Sam' })));
       expect(await screen.findByText('Sam Smith')).toBeInTheDocument();
+    });
+
+    it('shows each dependant\'s age next to their date of birth', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByDisplayValue('Ada');
+      await user.click(screen.getByRole('button', { name: 'Dependants' }));
+      expect(screen.getByRole('columnheader', { name: 'Age' })).toBeInTheDocument();
+      const row = screen.getByText('Kid Smith').closest('tr') as HTMLElement;
+      expect(within(row).getByText(String(ageOn('2015-06-01')))).toBeInTheDocument();
+    });
+
+    it('limits the date of birth to the last 120 years and blocks saving an older one', async () => {
+      const user = userEvent.setup();
+      renderPage();
+      await screen.findByDisplayValue('Ada');
+      await user.click(screen.getByRole('button', { name: 'Dependants' }));
+      await user.click(screen.getByRole('button', { name: 'Add Dependant' }));
+      await user.type(screen.getAllByRole('textbox')[0], 'Old');
+      const dob = document.querySelector('.card input[type="date"][min]') as HTMLInputElement;
+      expect(dob.min).toBe(earliestDob());
+      expect(dob.max).toBe(todayStr());
+      fireEvent.change(dob, { target: { value: '1850-01-01' } });
+      await user.click(screen.getByRole('button', { name: 'Save Changes' }));
+      expect(await screen.findByText("Date of birth can't be more than 120 years ago.")).toBeInTheDocument();
+      expect(api.post).not.toHaveBeenCalled();
     });
 
     it('blocks a nameless dependant', async () => {

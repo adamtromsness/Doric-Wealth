@@ -131,6 +131,39 @@ export function todayStr(): string {
   return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
 }
 
+// Age in whole years on `today` (YYYY-MM-DD) for a YYYY-MM-DD date of birth, or null
+// when the date is missing or invalid. Counts a birthday only once it has passed.
+export function ageOn(dob: string | null | undefined, today: string = todayStr()): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob ?? '');
+  const t = /^(\d{4})-(\d{2})-(\d{2})/.exec(today);
+  if (!m || !t) return null;
+  const [by, bm, bd] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const [ty, tm, td] = [Number(t[1]), Number(t[2]), Number(t[3])];
+  const age = ty - by - (tm < bm || (tm === bm && td < bd) ? 1 : 0);
+  return age >= 0 ? age : null;
+}
+
+// Oldest age a person can be entered with (matches the server's rule).
+export const MAX_AGE_YEARS = 120;
+
+// A problem with a date of birth, or null when it's fine (or blank).
+export function dobProblem(dob: string | null | undefined, today: string = todayStr()): string | null {
+  if (!dob) return null;
+  if (dob > today) return "Date of birth can't be in the future.";
+  const age = ageOn(dob, today);
+  if (age == null) return 'Enter a valid date of birth.';
+  if (age > MAX_AGE_YEARS) return `Date of birth can't be more than ${MAX_AGE_YEARS} years ago.`;
+  return null;
+}
+
+// The earliest date of birth allowed today (someone exactly MAX_AGE_YEARS old), for a
+// date input's `min`.
+export function earliestDob(today: string = todayStr()): string {
+  const [y, m, d] = today.split('-').map(Number);
+  const dt = new Date(Date.UTC(y - MAX_AGE_YEARS - 1, m - 1, d + 1));
+  return dt.toISOString().slice(0, 10);
+}
+
 // Normalize a user-entered site to an absolute, openable URL (default to https).
 export const normalizeUrl = (u: string | null | undefined): string | null => {
   const s = (u ?? '').trim();
