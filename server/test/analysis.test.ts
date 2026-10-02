@@ -130,13 +130,28 @@ test('POST /custom returns 503 when AI is not configured', async () => {
   }
 });
 
-test('POST /custom surfaces a non-503 error when Anthropic returns an API error', async () => {
+test('POST /custom shows a clear message when Anthropic fails, without its response body', async () => {
   const { client } = await registerUser(base);
   await enableAi(client);
-  anthropicResponder = () => new Response('rate limited', { status: 429 });
+  anthropicResponder = () => new Response('rate limited req_abc123', { status: 429 });
+  const r = await client.post('/api/analysis/custom', { question: 'go' });
+  assert.equal(r.status, 503);
+  assert.equal(r.body.error, 'Anthropic is rate-limiting requests. Try again in a minute.');
+
+  anthropicResponder = () => new Response('{"error":{"type":"authentication_error"}}', { status: 401 });
+  const bad = await client.post('/api/analysis/custom', { question: 'go' });
+  assert.equal(bad.status, 502);
+  assert.match(bad.body.error, /rejected the API key/);
+  assert.ok(!JSON.stringify(bad.body).includes('authentication_error'));
+});
+
+test('an unexpected (non-HttpError) failure is still masked as "Internal error"', async () => {
+  const { client } = await registerUser(base);
+  await enableAi(client);
+  // A 200 with a malformed body makes the client throw a plain TypeError.
+  anthropicResponder = () => new Response('{"not":"content"}', { status: 200 });
   const r = await client.post('/api/analysis/custom', { question: 'go' });
   assert.equal(r.status, 500);
-  // A non-HttpError is still masked: the upstream response body must not leak.
   assert.equal(r.body.error, 'Internal error');
 });
 

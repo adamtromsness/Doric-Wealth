@@ -1,5 +1,6 @@
 import { test, before, after, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { HttpError } from '../src/http.js';
 import { startServer, stopServer, registerUser } from './helpers.js';
 import { ask, askVision, resolveAiCreds, AiNotConfiguredError } from '../src/ai/claude.js';
 import { pool, requestStore } from '../src/db.js';
@@ -108,14 +109,37 @@ test('ask() throws AiNotConfiguredError when no key is available', async () => {
   assert.equal(calls.length, 0, 'no network call when unconfigured');
 });
 
-test('ask() throws on a non-ok Anthropic response, including status + body', async () => {
-  installStub();
-  responder = () => new Response('overloaded', { status: 529 });
+test('Anthropic failures become clear messages, without the upstream body', async () => {
   const { userId, bookId } = await tenantWithKey();
-  await assert.rejects(
-    withTenant(userId, bookId, () => ask('hi')),
-    (e: any) => /529/.test(e.message) && /overloaded/.test(e.message)
-  );
+  const cases: [number, number, RegExp][] = [
+    [401, 502, /rejected the API key\. Check it in AI Settings/],
+    [403, 502, /rejected the API key/],
+    [429, 503, /rate-limiting requests\. Try again in a minute/],
+    [529, 503, /temporarily unavailable/],
+    [500, 503, /temporarily unavailable/],
+    [404, 502, /failed \(status 404\)\. Check the model in AI Settings/],
+    [400, 502, /failed \(status 400\)/],
+    [418, 502, /^The AI request failed \(status 418\)\.$/],
+  ];
+  for (const [upstream, status, msg] of cases) {
+    installStub();
+    responder = () => new Response('secret-upstream-detail req_123', { status: upstream });
+    await assert.rejects(
+      withTenant(userId, bookId, () => ask('hi')),
+      (e: any) => e instanceof HttpError && e.status === status && msg.test(e.message) && !e.message.includes('secret-upstream-detail'),
+      `upstream ${upstream}`,
+    );
+  }
+});
+
+test('a timeout or an unreachable Anthropic gives a clear message', async () => {
+  const { userId, bookId } = await tenantWithKey();
+  globalThis.fetch = (async () => { const e = new Error('timed out'); e.name = 'TimeoutError'; throw e; }) as typeof fetch;
+  await assert.rejects(withTenant(userId, bookId, () => ask('hi')),
+    (e: any) => e instanceof HttpError && e.status === 504 && /timed out/.test(e.message));
+  globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+  await assert.rejects(withTenant(userId, bookId, () => askVision([{ data: 'x', mime: 'image/png' }], 'p')),
+    (e: any) => e instanceof HttpError && e.status === 502 && /Couldn't reach Anthropic/.test(e.message));
 });
 
 test('askVision() sends an image block + prompt and returns text', async () => {
@@ -159,6 +183,6 @@ test('askVision() throws AiNotConfiguredError with no key, and on API errors', a
   responder = () => new Response('bad', { status: 400 });
   await assert.rejects(
     withTenant(t.userId, t.bookId, () => askVision([{ data: 'x', mime: 'image/png' }], 'p')),
-    (e: any) => /400/.test(e.message)
+    (e: any) => e instanceof HttpError && /status 400/.test(e.message)
   );
 });

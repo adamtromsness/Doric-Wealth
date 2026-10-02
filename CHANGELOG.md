@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 - Reconciliations (not shown in the app yet) can only be completed when the cleared balance matches the statement. A completed reconciliation and the transactions in it are locked until it's reopened, and every completion and reopening is recorded.
 
 ### Fixed
+- When an AI feature can't reach Anthropic, you now see why and what to do: the API key was rejected (check AI Settings), Anthropic is rate-limiting or temporarily unavailable (try again), or the request timed out. Before, these showed "Internal error" (#4).
 - Account balances now include purchases that posted after a balance snapshot, even when they were made before it. Before, those purchases were left out of the balance.
 - Scheduled backups now run and capture your data. Before, they never ran with production settings.
 - Restoring a backup now works with production settings. Before, it failed.
