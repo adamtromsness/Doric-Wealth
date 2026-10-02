@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-02
+
 ### Added
 - **Integrations → RentCast:** add a RentCast API key for your books to estimate property values from comparable sales. The key is stored encrypted and shared by everyone in the books; only owners and admins can change it.
 - **Automatic property values:** on a property's Value tab, turn on **Update Value Automatically** to record a RentCast estimate each month (or week). The tab shows when it last updated, or why it couldn't.
