@@ -6,7 +6,7 @@ import { assertUploadMime, assertUploadSize, sendStoredFile } from '../uploads.j
 import { hh } from '../tenant.js';
 import {
   requiredString, optionalString, enumValue, optionalEnumValue, booleanValue, optionalBoolean,
-  money, optionalMoney, optionalNumber, optionalDateOnly, optionalIntegerId, ACCOUNT_TYPES,
+  money, optionalMoney, optionalNumber, optionalDateOnly, optionalIntegerId, ACCOUNT_TYPES, supportedCurrency,
 } from '../validation.js';
 
 export const accounts = Router();
@@ -130,7 +130,7 @@ accounts.post(
     const b = req.body ?? {};
     requiredString(b.name, 'name');
     b.type = b.type == null ? 'checking' : enumValue(b.type, 'type', ACCOUNT_TYPES);
-    if (b.currency == null) b.currency = 'USD';
+    b.currency = supportedCurrency(b.currency);
     if (b.is_liability == null) b.is_liability = false;
     const cols: string[] = []; const vals: any[] = [];
     for (const [col, coerce] of ACCOUNT_FIELDS) { cols.push(col); vals.push(coerce(b[col], col)); }
@@ -148,6 +148,7 @@ accounts.put(
   ah(async (req, res) => {
     const b = req.body ?? {};
     if (b.type != null) enumValue(b.type, 'type', ACCOUNT_TYPES);
+    if ('currency' in b) b.currency = supportedCurrency(b.currency);
     const sets: string[] = []; const vals: any[] = [];
     let i = 2; // $1 is the id
     for (const [col, coerce] of ACCOUNT_FIELDS) {

@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
-import { query, one, withTransaction, pool } from '../db.js';
+import { query, one, withTransaction, withBookContext, pool } from '../db.js';
 import { ah, HttpError } from '../http.js';
 import { hh, requireManager } from '../tenant.js';
 
@@ -71,6 +71,26 @@ function parseGroups(q: any): string[] | null {
 interface TableMeta { columns: string[]; bytea: Set<string>; jsonb: Set<string>; selfRef: Set<string>; notNull: Set<string>; hasId: boolean }
 
 // Every public table carrying a book_id (i.e. tenant data), minus identity.
+// Foreign keys in the public schema, read from pg_catalog. information_schema's
+// constraint views only list constraints on tables the current role OWNS, and the
+// production app role owns none, so under it they come back empty (and restore would
+// skip every id remap). `column`/`parent_col` are set for single-column FKs only.
+type FkEdge = { child: string; parent: string; column: string | null; parent_col: string | null };
+async function fkEdges(): Promise<FkEdge[]> {
+  return query<FkEdge>(
+    `SELECT ch.relname AS child, pa.relname AS parent,
+            CASE WHEN cardinality(c.conkey) = 1 THEN a.attname END AS column,
+            CASE WHEN cardinality(c.confkey) = 1 THEN af.attname END AS parent_col
+       FROM pg_constraint c
+       JOIN pg_class ch ON ch.oid = c.conrelid
+       JOIN pg_class pa ON pa.oid = c.confrelid
+       JOIN pg_namespace n ON n.oid = ch.relnamespace AND n.nspname = 'public'
+       LEFT JOIN pg_attribute a  ON a.attrelid  = c.conrelid  AND a.attnum  = c.conkey[1]
+       LEFT JOIN pg_attribute af ON af.attrelid = c.confrelid AND af.attnum = c.confkey[1]
+      WHERE c.contype = 'f'`
+  );
+}
+
 async function dataTables(): Promise<string[]> {
   const rows = await query<{ table_name: string }>(
     `SELECT DISTINCT table_name FROM information_schema.columns
@@ -86,13 +106,9 @@ async function tableMeta(tables: string[]): Promise<Record<string, TableMeta>> {
     [tables]
   );
   // Self-referencing FK columns (e.g. categories.parent_id) — inserted deferred.
-  const selfRefs = await query<{ table_name: string; column_name: string }>(
-    `SELECT tc.table_name, kcu.column_name
-     FROM information_schema.table_constraints tc
-     JOIN information_schema.key_column_usage kcu ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
-     JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public' AND tc.table_name = ccu.table_name`
-  );
+  const selfRefs = (await fkEdges())
+    .filter((e) => e.child === e.parent && e.column)
+    .map((e) => ({ table_name: e.child, column_name: e.column! }));
   const meta: Record<string, TableMeta> = {};
   for (const t of tables) meta[t] = { columns: [], bytea: new Set(), jsonb: new Set(), selfRef: new Set(), notNull: new Set(), hasId: false };
   for (const c of cols) {
@@ -110,12 +126,7 @@ async function tableMeta(tables: string[]): Promise<Record<string, TableMeta>> {
 // Topological order (parents before children) from FK edges among `tables`.
 async function topoOrder(tables: string[]): Promise<string[]> {
   const set = new Set(tables);
-  const edges = await query<{ child: string; parent: string }>(
-    `SELECT tc.table_name AS child, ccu.table_name AS parent
-     FROM information_schema.table_constraints tc
-     JOIN information_schema.constraint_column_usage ccu ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'`
-  );
+  const edges = await fkEdges();
   const deps: Record<string, Set<string>> = {};
   for (const t of tables) deps[t] = new Set();
   for (const e of edges) if (set.has(e.child) && set.has(e.parent) && e.child !== e.parent) deps[e.child].add(e.parent);
@@ -138,24 +149,14 @@ async function topoOrder(tables: string[]): Promise<string[]> {
 // Cross-table FK columns (child column → referenced parent table) among `tables`,
 // restricted to single-column FKs that reference the parent's `id`. Used on restore
 // to remap a snapshot's old ids to the freshly-generated ones. Self-referential FKs
-// are handled separately via TableMeta.selfRef. (Our FKs are all single-column, so
-// the information_schema kcu/ccu join pairs columns correctly.)
+// are handled separately via TableMeta.selfRef.
 async function fkColumns(tables: string[]): Promise<Record<string, { column: string; parent: string }[]>> {
   const set = new Set(tables);
-  const rows = await query<{ child: string; column: string; parent: string; parent_col: string }>(
-    `SELECT tc.table_name AS child, kcu.column_name AS column,
-            ccu.table_name AS parent, ccu.column_name AS parent_col
-     FROM information_schema.table_constraints tc
-     JOIN information_schema.key_column_usage kcu
-       ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
-     JOIN information_schema.constraint_column_usage ccu
-       ON ccu.constraint_name = tc.constraint_name AND ccu.table_schema = tc.table_schema
-     WHERE tc.constraint_type = 'FOREIGN KEY' AND tc.table_schema = 'public'`
-  );
+  const rows = await fkEdges();
   const out: Record<string, { column: string; parent: string }[]> = {};
   for (const t of tables) out[t] = [];
   for (const r of rows) {
-    if (!set.has(r.child) || !set.has(r.parent) || r.child === r.parent || r.parent_col !== 'id') continue;
+    if (!set.has(r.child) || !set.has(r.parent) || r.child === r.parent || r.parent_col !== 'id' || !r.column) continue;
     out[r.child].push({ column: r.column, parent: r.parent });
   }
   return out;
@@ -189,8 +190,9 @@ backup.get('/groups', ah(async (req, res) => {
 // full dataset nor the full serialized string is ever resident in memory. Rows are
 // paged per table by id (keyset); bytea blobs are base64-encoded per row. The output
 // is byte-for-byte the shape buildEnvelope used to produce as one string. Queries
-// filter explicitly by book_id, so this is safe both inside a request and from the
-// background scheduler (which sets app.book_id on its own connection).
+// filter explicitly by book_id and run on the bound connection: the request's, or a
+// background job's (withBookContext). Callers wrap it in one REPEATABLE READ
+// transaction so every table/page sees the same committed state.
 type EnvelopeWriter = (chunk: string) => void | Promise<void>;
 
 async function streamEnvelope(bookId: number, groups: string[] | null, write: EnvelopeWriter): Promise<void> {
@@ -269,7 +271,14 @@ backup.get('/export', ah(async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
   try {
-    await streamEnvelope(bookId, groups, makeResWriter(res));
+    // One REPEATABLE READ, READ ONLY transaction: every table and page reads the same
+    // committed state, so concurrent edits can't produce a mixed or dangling export.
+    // A slow download keeps the transaction open between writes, so allow longer idle
+    // gaps than the pool's 60s default for this transaction only.
+    await withTransaction(async (client) => {
+      await client.query(`SET LOCAL idle_in_transaction_session_timeout = '15min'`);
+      await streamEnvelope(bookId, groups, makeResWriter(res));
+    }, { isolation: 'repeatable read', readOnly: true });
     res.end();
   } catch (e) {
     // Headers and part of the body are already on the wire, so we can't switch to a
@@ -663,8 +672,11 @@ backup.post('/snapshots', ah(async (req, res) => {
   const bookId = hh(req);
   const groups = parseGroupList(Array.isArray(req.body?.groups) ? req.body.groups.map(String).join(',') : null);
   const name = snapName(req.body?.name, 'Manual snapshot');
-  const body = await buildEnvelope(bookId, groups);
-  const id = await withTransaction((client) => storeSnapshot(client, bookId, body, { name, label: 'manual', full: groups == null }));
+  // Build and store in one REPEATABLE READ transaction: a consistent view of the book.
+  const id = await withTransaction(async (client) => {
+    const body = await buildEnvelope(bookId, groups);
+    return storeSnapshot(client, bookId, body, { name, label: 'manual', full: groups == null });
+  }, { isolation: 'repeatable read' });
   res.json({ ok: true, id });
 }));
 
@@ -775,35 +787,36 @@ backup.delete('/snapshots/:id', ah(async (req, res) => {
   res.json({ ok: true });
 }));
 
-// Generate and store one scheduled snapshot for a book, enforcing the cap.
-// Runs on a dedicated connection with app.book_id set (no HTTP request in scope).
+// Generate and store one scheduled snapshot for a book, enforcing the cap. Runs in
+// the book's tenant context (no HTTP request in scope) and in one REPEATABLE READ
+// transaction, so the snapshot is a consistent view of the book and is stored, with
+// last_backup_at, atomically: a failure stores nothing and leaves the book due.
 async function runBookBackup(bookId: number, groups: string[] | null): Promise<void> {
-  const body = await buildEnvelope(bookId, groups);
-  const client = await pool.connect();
-  try {
-    await client.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
-    await client.query('BEGIN');
-    try {
-      await storeSnapshot(client, bookId, body, { name: 'Scheduled snapshot', label: 'auto', full: groups == null });
-      await client.query(`UPDATE book_backup_settings SET last_backup_at = now() WHERE book_id = $1`, [bookId]);
-      await client.query('COMMIT');
-    } catch (e) { await client.query('ROLLBACK'); throw e; }
-  } finally {
-    await client.query('RESET ALL').catch(() => {});
-    client.release();
-  }
+  await withBookContext(bookId, async (client) => {
+    const body = await buildEnvelope(bookId, groups);
+    await storeSnapshot(client, bookId, body, { name: 'Scheduled snapshot', label: 'auto', full: groups == null });
+    await client.query(`UPDATE book_backup_settings SET last_backup_at = now() WHERE book_id = $1`, [bookId]);
+  }, { isolation: 'repeatable read' });
 }
 
 // Background entry point: find books whose schedule is due and back each one up.
 // Same "aligned to the chosen time-of-day" due logic as the SimpleFIN auto-import.
 export async function runDueBackupsSafe(): Promise<void> {
   try {
-    const rows = (await pool.query(
-      `SELECT book_id, frequency, groups,
-              EXTRACT(EPOCH FROM last_backup_at)::bigint AS last_epoch,
-              EXTRACT(EPOCH FROM COALESCE(start_at, updated_at))::bigint AS start_epoch
-         FROM book_backup_settings WHERE enabled = true`
-    )).rows as any[];
+    // book_backup_settings is under row-level security, so read each book's settings in
+    // that book's context; `books` itself isn't, so enumerate it directly.
+    const books = (await pool.query(`SELECT id FROM books ORDER BY id`)).rows as { id: number }[];
+    const rows: any[] = [];
+    for (const b of books) {
+      const r = await withBookContext(b.id, () => one<any>(
+        `SELECT book_id, frequency, groups,
+                EXTRACT(EPOCH FROM last_backup_at)::bigint AS last_epoch,
+                EXTRACT(EPOCH FROM COALESCE(start_at, updated_at))::bigint AS start_epoch
+           FROM book_backup_settings WHERE book_id = $1 AND enabled = true`,
+        [b.id]
+      ), { readOnly: true });
+      if (r) rows.push(r);
+    }
     const nowS = Math.floor(Date.now() / 1000);
     for (const s of rows) {
       const start = Number(s.start_epoch);

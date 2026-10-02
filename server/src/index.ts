@@ -36,6 +36,7 @@ import { analysis } from './routes/analysis.js';
 import { dashboard } from './routes/dashboard.js';
 import { connections, syncAllSimplefinLinksSafe } from './routes/connections.js';
 import { runDueBackupsSafe } from './routes/backup.js';
+import { encryptLegacyAiKeys } from './ai/aiKeys.js';
 import { receiptItems } from './routes/receiptItems.js';
 import { todos } from './routes/todos.js';
 
@@ -144,6 +145,12 @@ if (fs.existsSync(webDist)) {
 
 // Centralized error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // SQLSTATE DR409: a database guard refused a change with a message written for the
+  // user (e.g. editing a reconciled transaction; see migration 129).
+  if (err?.code === 'DR409') {
+    res.status(409).json({ error: String(err.message) });
+    return;
+  }
   const isHttpError = err instanceof HttpError;
   const status = isHttpError ? err.status : 500;
   if (status >= 500) console.error(err);
@@ -164,6 +171,9 @@ if (process.env.SERVER_NO_LISTEN !== '1') {
   try {
     assertProductionConfig();
     await assertSafeAppRole();
+    // Encrypt any personal AI keys stored before at-rest encryption.
+    const n = await encryptLegacyAiKeys();
+    if (n) console.log(`Encrypted ${n} stored personal AI key(s).`);
   } catch (e: any) {
     console.error(e?.message ?? e);
     process.exit(1);

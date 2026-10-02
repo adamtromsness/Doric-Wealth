@@ -64,13 +64,13 @@ test('apply-settings overwrites a mapped account from SimpleFIN', async () => {
   const { client, bookId } = await registerUser(base);
   const acct = (await client.post('/api/accounts', { name: 'Old Name', type: 'checking', institution: 'Old Bank', currency: 'USD' })).body;
   const linkId = await seedLink(bookId, 'ext-2',
-    { name: 'Everyday Savings', org_name: 'New Bank', currency: 'EUR', last_balance: 999.99, balance_epoch: 1700000000 }, acct.id);
+    { name: 'Everyday Savings', org_name: 'New Bank', currency: 'usd', last_balance: 999.99, balance_epoch: 1700000000 }, acct.id);
 
   const r = await client.post(`/api/connections/${linkId}/apply-settings`, { external_account_id: 'ext-2' });
   assert.equal(r.status, 200);
   assert.equal(r.body.name, 'Everyday Savings');
   assert.equal(r.body.institution, 'New Bank');
-  assert.equal(r.body.currency, 'EUR');
+  assert.equal(r.body.currency, 'USD', 'normalized (only USD is supported)');
 
   // apply-settings on an unmapped external account is rejected.
   const linkId2 = await seedLink(bookId, 'ext-3',

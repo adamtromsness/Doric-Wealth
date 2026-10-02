@@ -37,9 +37,21 @@ jobs:
       - name: Install
         working-directory: server
         run: npm ci
+      - name: Production build
+        working-directory: server
+        run: npm run build
       - name: Test with coverage gate
         working-directory: server
         run: npm run test:coverage:gate
+      # Again as a restricted (non-superuser, NOBYPASSRLS) role, like production, so
+      # row-level security is enforced; the privileged run can't catch a missing
+      # tenant context (prepare-db creates the role).
+      - name: Test under a restricted database role
+        working-directory: server
+        run: TEST_RESTRICTED_ROLE=1 npm run test:integration
+      - name: Dependency audit (production)
+        working-directory: server
+        run: npm audit --omit=dev --audit-level=moderate
 
   web:
     name: Web tests + coverage (≥90%)
@@ -57,3 +69,9 @@ jobs:
       - name: Test with coverage gate
         working-directory: web
         run: npm run test:coverage:gate
+      - name: Production build
+        working-directory: web
+        run: npm run build
+      - name: Dependency audit (production)
+        working-directory: web
+        run: npm audit --omit=dev --audit-level=moderate

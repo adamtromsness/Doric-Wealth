@@ -401,7 +401,9 @@ export function TxnEditor({
             <option value="transfer">Transfer</option>
           </select>
         </Field>
-        <Field label="Amount"><AmountInput value={f.amount} onChange={(v) => setF({ ...f, amount: v })} placeholder="0.00" /></Field>
+        {/* A new transaction starts in Amount so you can open the editor and type it straight away
+            (not when editing, or reviewing an import whose amount is already filled in). */}
+        <Field label="Amount"><AmountInput value={f.amount} onChange={(v) => setF({ ...f, amount: v })} placeholder="0.00" autoFocus={!txn && !confirmStaged} /></Field>
       </div>
 
       {/* Account + status near the top */}

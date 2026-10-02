@@ -54,7 +54,9 @@ export async function assertSafeAppRole(): Promise<void> {
 // sets `app.book_id` on it (for row-level security), and runs the rest of
 // the request inside this store. query/one/withTransaction then use that client
 // automatically, so every statement in the request is tenant-scoped at the DB.
-export const requestStore = new AsyncLocalStorage<{ client: pg.PoolClient }>();
+// `inTransaction` marks a binding that is already inside a transaction (background
+// jobs, see withBookContext); withTransaction then nests with a savepoint.
+export const requestStore = new AsyncLocalStorage<{ client: pg.PoolClient; inTransaction?: boolean }>();
 
 type Queryable = Pick<pg.PoolClient, 'query'>;
 function runner(): Queryable {
@@ -71,13 +73,39 @@ export async function one<T = any>(text: string, params: any[] = []): Promise<T 
   return rows[0] ?? null;
 }
 
+export type TxOptions = {
+  // 'repeatable read' gives every statement in the transaction the same snapshot of
+  // committed data (e.g. a multi-table export that must be internally consistent).
+  isolation?: 'repeatable read' | 'serializable';
+  readOnly?: boolean;
+};
+const beginSql = (o: TxOptions = {}) =>
+  `BEGIN${o.isolation ? ` ISOLATION LEVEL ${o.isolation.toUpperCase()}` : ''}${o.readOnly ? ' READ ONLY' : ''}`;
+
+let savepointSeq = 0;
+
 // Run `fn` inside a transaction. When a request connection is bound (the common
 // case for API handlers), the transaction runs on it so the RLS GUC stays in
-// effect; otherwise a fresh pooled connection is used and released.
-export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
-  const bound = requestStore.getStore()?.client;
+// effect; otherwise a fresh pooled connection is used and released. If the bound
+// connection is already inside a transaction (a background job), this nests with a
+// savepoint instead of issuing a second BEGIN, whose COMMIT would end the outer one.
+export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>, opts: TxOptions = {}): Promise<T> {
+  const store = requestStore.getStore();
+  const bound = store?.client;
+  if (bound && store?.inTransaction) {
+    const sp = `sp_${++savepointSeq}`;
+    await bound.query(`SAVEPOINT ${sp}`);
+    try {
+      const result = await fn(bound);
+      await bound.query(`RELEASE SAVEPOINT ${sp}`);
+      return result;
+    } catch (e) {
+      await bound.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
+      throw e;
+    }
+  }
   if (bound) {
-    await bound.query('BEGIN');
+    await bound.query(beginSql(opts));
     try {
       const result = await fn(bound);
       await bound.query('COMMIT');
@@ -89,13 +117,37 @@ export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<
   }
   const client = await pool.connect();
   try {
-    await client.query('BEGIN');
+    await client.query(beginSql(opts));
     const result = await fn(client);
     await client.query('COMMIT');
     return result;
   } catch (e) {
     await client.query('ROLLBACK');
     throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// Run a background job (no HTTP request in scope) for one book: a dedicated
+// connection, one transaction, and app.book_id set transaction-locally so row-level
+// security applies exactly as in a request. query/one/withTransaction inside `fn` use
+// this connection automatically. Without this, job queries run on the shared pool
+// with no tenant context, and under the production (non-superuser) role RLS hides
+// every tenant row: reads come back empty and nothing fails loudly.
+export async function withBookContext<T>(bookId: number, fn: (client: pg.PoolClient) => Promise<T>, opts: TxOptions = {}): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query(beginSql(opts));
+    try {
+      await client.query(`SELECT set_config('app.book_id', $1, true)`, [String(bookId)]);
+      const result = await requestStore.run({ client, inTransaction: true }, () => fn(client));
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    }
   } finally {
     client.release();
   }

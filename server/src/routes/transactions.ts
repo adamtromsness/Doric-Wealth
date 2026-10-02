@@ -670,10 +670,12 @@ transactions.get('/transfer-suggestions', ah(async (req, res) => {
 
 // Delete a posted transaction the same way DELETE /:id does (cascade splits/tags, then
 // re-derive any utility invoices it paid).
-async function deletePostedTxn(client: any, bookId: number, id: number) {
+// Returns whether the transaction existed (and was deleted).
+async function deletePostedTxn(client: any, bookId: number, id: number): Promise<boolean> {
   const affected = (await client.query(`SELECT DISTINCT invoice_id FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2`, [id, bookId])).rows.map((x: any) => Number(x.invoice_id));
-  await client.query(`DELETE FROM transactions WHERE id = $1 AND book_id = $2`, [id, bookId]);
+  const del = await client.query(`DELETE FROM transactions WHERE id = $1 AND book_id = $2`, [id, bookId]);
   for (const inv of affected) await recomputeInvoicePaid(client, inv, bookId);
+  return del.rowCount === 1;
 }
 
 // Replace two posted transactions with one transfer.
@@ -683,10 +685,17 @@ transactions.post('/transfer-suggestions/confirm', ah(async (req, res) => {
   const inId = Number(req.body?.in_id);
   if (!Number.isInteger(outId) || !Number.isInteger(inId) || outId === inId) throw new HttpError(400, 'Two different transactions are required.');
   const created = await withTransaction(async (client) => {
-    const load = async (id: number) => (await client.query(`SELECT * FROM transactions WHERE id = $1 AND book_id = $2`, [id, bookId])).rows[0];
-    const a = await load(outId);
-    const b = await load(inId);
-    if (!a || !b) throw new HttpError(404, 'Transaction not found.');
+    // Lock both rows (in id order, so two requests can't deadlock) before validating.
+    // A concurrent confirmation of the same pair, or of a pair sharing one of these
+    // transactions, waits here; once the first commits, the rows are gone and this
+    // one gets a conflict instead of creating a second transfer.
+    const rows = (await client.query(
+      `SELECT * FROM transactions WHERE id = ANY($1::int[]) AND book_id = $2 ORDER BY id FOR UPDATE`,
+      [[outId, inId], bookId]
+    )).rows;
+    const a = rows.find((r: any) => r.id === outId);
+    const b = rows.find((r: any) => r.id === inId);
+    if (!a || !b) throw new HttpError(409, 'One of these transactions no longer exists. It may already have been converted to a transfer.');
     if (a.account_id === b.account_id) throw new HttpError(400, 'A transfer must be between two different accounts.');
     if (Number(a.amount) !== Number(b.amount)) throw new HttpError(400, 'These transactions are not the same amount.');
     const src = a.direction === 'expense' ? a : b;
@@ -694,8 +703,8 @@ transactions.post('/transfer-suggestions/confirm', ah(async (req, res) => {
     if (src.direction !== 'expense' || dst.direction !== 'income') throw new HttpError(400, 'A transfer needs one expense and one income.');
     // Carry the expense's provenance onto the transfer; record the income's provider id
     // so neither side re-imports later.
-    await deletePostedTxn(client, bookId, src.id);
-    await deletePostedTxn(client, bookId, dst.id);
+    const removed = (await deletePostedTxn(client, bookId, src.id)) && (await deletePostedTxn(client, bookId, dst.id));
+    if (!removed) throw new HttpError(409, 'These transactions changed while converting them. Refresh and try again.');
     const transfer = await insertTransaction(client, bookId, {
       account_id: src.account_id, transfer_account_id: dst.account_id, direction: 'transfer',
       amount: src.amount, txn_date: src.txn_date, posted_date: src.posted_date ?? src.txn_date,

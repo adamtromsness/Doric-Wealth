@@ -235,3 +235,20 @@ export function clampText(value: unknown, max = 500): string | null {
   if (!s) return null;
   return s.length > max ? s.slice(0, max) : s;
 }
+
+// Doric works in one currency: every balance, total, and transfer is in US dollars.
+// Other currencies are refused rather than silently summed as if they were dollars.
+// (Supporting more would need a base currency, dated exchange rates, and separate
+// amounts for each side of a cross-currency transfer.)
+export const SUPPORTED_CURRENCY = 'USD';
+
+export function isSupportedCurrency(value: unknown): boolean {
+  return isBlank(value) || String(value).trim().toUpperCase() === SUPPORTED_CURRENCY;
+}
+
+// The account currency to store: USD when omitted; anything else is a 400.
+export function supportedCurrency(value: unknown, field = 'currency'): string {
+  if (isSupportedCurrency(value)) return SUPPORTED_CURRENCY;
+  const shown = String(value).trim().slice(0, 10);
+  throw new HttpError(400, `${field === 'currency' ? 'This account is' : `${field} is`} in ${shown}. Doric supports US dollars (USD) only, so balances in other currencies can't be added (they would be mixed with dollars).`);
+}

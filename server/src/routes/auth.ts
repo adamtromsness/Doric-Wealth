@@ -6,6 +6,7 @@ import {
   SESSION_COOKIE, sessionCookieOptions, hashToken,
 } from '../auth.js';
 import { inviteUsable } from './invites.js';
+import { encodeAiKey, decodeAiKey } from '../ai/aiKeys.js';
 import { requireAuth, mePayload } from '../tenant.js';
 import { rateLimit } from '../rateLimit.js';
 import { config } from '../config.js';
@@ -17,7 +18,7 @@ const MIN_PASSWORD_LENGTH = 8;
 
 // Shape the AI-settings response (the raw key is never returned — only a masked hint).
 function aiSettingsPayload(row: { ai_api_key: string | null; ai_model: string | null } | null) {
-  const key = row?.ai_api_key?.trim() || '';
+  const key = decodeAiKey(row?.ai_api_key) ?? '';
   return {
     configured: Boolean(key || config.anthropicApiKey),
     user_key_set: Boolean(key),
@@ -366,7 +367,7 @@ auth.put(
     const has = (k: string) => Object.prototype.hasOwnProperty.call(req.body ?? {}, k);
     const setKey = has('api_key');
     const setModel = has('model');
-    const keyVal = (typeof req.body?.api_key === 'string' && req.body.api_key.trim()) ? req.body.api_key.trim() : null;
+    const keyVal = (typeof req.body?.api_key === 'string' && req.body.api_key.trim()) ? encodeAiKey(req.body.api_key.trim()) : null;
     const modelVal = (typeof req.body?.model === 'string' && req.body.model.trim()) ? req.body.model.trim() : null;
     await one(
       `UPDATE users SET
