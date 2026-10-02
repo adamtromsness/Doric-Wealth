@@ -24,19 +24,22 @@ export function Loading({ card, backTo, backLabel }: { card?: boolean; backTo?: 
   return body;
 }
 
-// Format an amount string to two decimals for display (e.g. "6" → "6.00"),
-// leaving blanks and non-numeric values untouched.
+// Money at rest: "$1,234.50" (negative "−$1,234.50"), matching money() in api.ts.
+// Blank stays blank; anything unparseable is shown as typed.
 const fmtAmount = (value: string): string => {
   const t = String(value ?? '').trim().replace(/[$,\s]/g, '');
   if (t === '') return value ?? '';
   const n = Number(t);
-  return Number.isFinite(n) ? n.toFixed(2) : value;
+  if (!Number.isFinite(n)) return value;
+  const v = Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return (n < 0 ? '−$' : '$') + v;
 };
 
-// A money input that always shows two decimal places at rest (e.g. "6" displays
-// as "6.00", "5.5" as "5.50"), while showing the raw value during editing so
-// typing isn't disrupted. Blank stays blank so optional amounts aren't forced to
-// 0.00. Value-based onChange; passes through style/placeholder/disabled/etc.
+// A money input that shows the full money format at rest ("127000" displays as
+// "$127,000.00"), and the plain number while editing so typing isn't disrupted.
+// Blank stays blank so optional amounts aren't forced to $0.00. The value it reports
+// is always the plain number ("127000.00"). Value-based onChange; passes through
+// style/placeholder/disabled/etc.
 export function AmountInput({ value, onChange, className, onFocus, onBlur, ...rest }: {
   value: string;
   onChange: (v: string) => void;

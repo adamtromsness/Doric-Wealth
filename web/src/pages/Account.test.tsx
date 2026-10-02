@@ -21,6 +21,7 @@ const profileFixture = {
   first_name: 'Ada',
   last_name: 'Lovelace',
   employment_status: 'employed',
+  annual_income: 127000,
   dependants: [
     { id: 5, first_name: 'Kid', middle_name: null, last_name: 'Smith', name: 'Kid Smith', relationship: 'Child', dob: '2015-06-01', notes: null },
   ],
@@ -90,6 +91,21 @@ describe('Account page', () => {
     expect(screen.getByText('Retirement Planning')).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Emergency' }));
     expect(screen.getByText('Emergency Contact')).toBeInTheDocument();
+  });
+
+  it('shows profile money fields as money ($127,000.00) and saves the plain number', async () => {
+    const user = userEvent.setup();
+    (api.put as any).mockResolvedValue({ ...profileFixture, annual_income: 130000 });
+    renderPage();
+    await screen.findByDisplayValue('Ada');
+    await user.click(screen.getByRole('button', { name: 'Occupation' }));
+    const income = screen.getByDisplayValue('$127,000.00');
+    await user.click(income);
+    expect(income).toHaveValue('127000');
+    await user.clear(income);
+    await user.type(income, '130000');
+    await user.tab();
+    expect(income).toHaveValue('$130,000.00');
   });
 
   describe('dependants tab', () => {
