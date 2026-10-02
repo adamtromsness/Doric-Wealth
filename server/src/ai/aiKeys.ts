@@ -2,28 +2,13 @@
 // same AES-256-GCM scheme as linked-account credentials (secrets.ts). Stored form:
 // "enc1:" + encryptSecret(key). Older rows may still hold plaintext; they're read as
 // is and encrypted on the next boot (encryptLegacyAiKeys).
-import { encryptSecret, decryptSecret } from '../secrets.js';
+import { encodeKeyAtRest, decodeKeyAtRest } from '../secrets.js';
 import { pool } from '../db.js';
 
 const PREFIX = 'enc1:';
 
-export function encodeAiKey(plain: string): string {
-  return PREFIX + encryptSecret(plain);
-}
-
-// The usable key, or null when none is stored or it can't be decrypted (e.g. the
-// server's APP_SECRET_KEY changed since it was saved: the user re-enters it).
-export function decodeAiKey(stored: string | null | undefined): string | null {
-  const v = stored?.trim();
-  if (!v) return null;
-  if (!v.startsWith(PREFIX)) return v; // legacy plaintext, encrypted on next boot
-  try {
-    return decryptSecret(v.slice(PREFIX.length));
-  } catch {
-    console.warn('A stored personal AI key could not be decrypted (APP_SECRET_KEY changed?); treating it as not set.');
-    return null;
-  }
-}
+export const encodeAiKey = (plain: string): string => encodeKeyAtRest(plain);
+export const decodeAiKey = (stored: string | null | undefined): string | null => decodeKeyAtRest(stored, 'personal AI key');
 
 // Encrypt any plaintext keys left from before encryption. Idempotent; runs on boot.
 export async function encryptLegacyAiKeys(): Promise<number> {

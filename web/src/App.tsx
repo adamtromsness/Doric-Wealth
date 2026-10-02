@@ -37,6 +37,7 @@ const Account = lazy(() => import('./pages/Account'));
 const MyData = lazy(() => import('./pages/MyData'));
 const SimpleFinIntegration = lazy(() => import('./pages/integrations/SimpleFinIntegration'));
 const AiIntegration = lazy(() => import('./pages/integrations/AiIntegration'));
+const RentcastIntegration = lazy(() => import('./pages/integrations/RentcastIntegration'));
 import { SubscriptionAlert } from './components/SubscriptionSuggestions';
 import { UserMenu } from './components/UserMenu';
 
@@ -161,6 +162,7 @@ export default function App() {
           <Route path="/my-data" element={<MyData />} />
           <Route path="/integrations/simplefin" element={<SimpleFinIntegration />} />
           <Route path="/integrations/ai" element={<AiIntegration />} />
+          <Route path="/integrations/rentcast" element={<RentcastIntegration />} />
           <Route path="/accept" element={<AcceptInvite />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

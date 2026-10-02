@@ -1,15 +1,15 @@
 import { Router } from 'express';
-import { query, one, withTransaction } from '../db.js';
+import { query, one, withTransaction, withBookContext, pool } from '../db.js';
 import { ah, require_, HttpError } from '../http.js';
 import { ask, AiNotConfiguredError } from '../ai/claude.js';
-import { config, rentcastConfigured } from '../config.js';
+import { resolveRentcastKey, rentcastValue, fullAddress } from '../rentcast.js';
 import { EFFECTIVE_LINES, EFFECTIVE_LINE_TAGS, ACCOUNT_BALANCES } from '../effectiveLines.js';
 import { hh } from '../tenant.js';
 import { assertUploadMime, assertUploadSize, sendStoredFile } from '../uploads.js';
 import { mountInsuranceRoutes } from './insuranceRoutes.js';
 import {
   requiredString, optionalEnumValue, optionalMoney, optionalNumber, optionalDateOnly, optionalBoolean,
-  optionalString, booleanValue, ownedRef,
+  optionalString, booleanValue, ownedRef, integerId,
   PROPERTY_TYPES, PROPERTY_DISPOSAL_TYPES,
 } from '../validation.js';
 
@@ -43,63 +43,10 @@ function validateProperty(b: any): void {
   optionalBoolean(b.is_new_construction, 'is_new_construction');
 }
 
-// Join "City, ST ZIP" onto the street line for geocoding / display.
-function fullAddress(b: any): string | null {
-  const parts = [b.address, [b.city, b.state].filter(Boolean).join(', '), b.zip]
-    .map((p: any) => (p ? String(p).trim() : ''))
-    .filter(Boolean);
-  return parts.length ? parts.join(' ').replace(/\s+,/g, ',') : null;
-}
-
-const numOrNull = (n: any) => (typeof n === 'number' && Number.isFinite(n) ? Math.round(n) : null);
-
-// Map our property types to RentCast's expected propertyType values (others omitted).
-const RENTCAST_TYPE: Record<string, string> = {
-  single_family: 'Single Family', condo: 'Condo', townhouse: 'Townhouse',
-  multi_family: 'Multi-Family', land: 'Land',
-};
-
-// RentCast AVM value estimate (real comparable-sales model). Requires RENTCAST_API_KEY.
-async function rentcastValue(address: string, sqft: number | null, type: string | null) {
-  const params = new URLSearchParams({ address });
-  if (sqft) params.set('squareFootage', String(sqft));
-  if (type && RENTCAST_TYPE[type]) params.set('propertyType', RENTCAST_TYPE[type]);
-
-  let r: globalThis.Response;
-  try {
-    r = await fetch(`https://api.rentcast.io/v1/avm/value?${params.toString()}`, {
-      headers: { 'X-Api-Key': config.rentcastApiKey, accept: 'application/json' },
-      signal: AbortSignal.timeout(15_000),
-    });
-  } catch {
-    throw new HttpError(502, 'Could not reach RentCast.');
-  }
-  if (!r.ok) {
-    let msg = '';
-    try { msg = ((await r.json()) as any)?.message || ''; } catch { /* ignore */ }
-    if (r.status === 404) throw new HttpError(404, 'RentCast has no value estimate for that address.');
-    if (r.status === 429) throw new HttpError(429, 'RentCast monthly request limit reached (free tier).');
-    // Don't leak the upstream's own message (e.g. account/subscription state) to the
-    // client — log it server-side and return a generic error.
-    console.error(`RentCast AVM error (${r.status})${msg ? `: ${msg}` : ''}`);
-    throw new HttpError(502, 'Could not retrieve a value estimate right now. Please try again later.');
-  }
-
-  const d = (await r.json()) as any;
-  const value = numOrNull(d.price);
-  if (value == null) throw new HttpError(502, 'RentCast returned no value for that address.');
-  return {
-    value,
-    low: numOrNull(d.priceRangeLow),
-    high: numOrNull(d.priceRangeHigh),
-    rationale: 'RentCast AVM estimate from comparable sales.',
-    source: 'rentcast' as const,
-  };
-}
-
-// Estimate a property's current market value. Uses the RentCast AVM when
-// RENTCAST_API_KEY is set and an address is available; otherwise falls back to
-// a Claude (AI) appraisal estimate. (Zillow's Zestimate has no free public API.)
+// Estimate a property's current market value. Uses the RentCast AVM when the book
+// has a RentCast key (its own, or the server's) and an address is available;
+// otherwise falls back to a Claude (AI) appraisal estimate. (Zillow's Zestimate has
+// no public API, and its terms prohibit scraping.)
 properties.post(
   '/estimate-value',
   ah(async (req, res) => {
@@ -114,8 +61,9 @@ properties.post(
     const purchaseDate = b.purchase_date ? String(b.purchase_date).slice(0, 10) : null;
 
     // Preferred path: real market data from RentCast (needs a key + an address).
-    if (rentcastConfigured && address) {
-      res.json(await rentcastValue(address, sqft, type));
+    const { key: rentcastKey } = await resolveRentcastKey(hh(req));
+    if (rentcastKey && address) {
+      res.json(await rentcastValue(rentcastKey, address, sqft, type));
       return;
     }
 
@@ -438,13 +386,99 @@ async function syncCurrentValue(client: any, propertyId: number) {
   );
 }
 
+const VALUE_SOURCES = ['manual', 'rentcast', 'ai'] as const;
+const AUTO_VALUE_FREQUENCIES = ['weekly', 'monthly'] as const;
+
+// Turn automatic RentCast value updates on/off for a property, and set how often.
+// Turning it on needs an address and a RentCast key for the book.
+properties.put(
+  '/:id/auto-value',
+  ah(async (req, res) => {
+    const bookId = hh(req);
+    const prop = await one<any>(`SELECT * FROM properties WHERE id = $1 AND book_id = $2`, [integerId(req.params.id, 'id'), bookId]);
+    if (!prop) throw new HttpError(404, 'Property not found');
+    const enabled = booleanValue(req.body?.enabled, 'enabled');
+    const frequency = optionalEnumValue(req.body?.frequency, 'frequency', AUTO_VALUE_FREQUENCIES) ?? prop.auto_value_frequency ?? 'monthly';
+    if (enabled) {
+      if (!fullAddress(prop) || !prop.address) throw new HttpError(400, 'Add the property\'s street address first. RentCast estimates are by address.');
+      const { key } = await resolveRentcastKey(bookId);
+      if (!key) throw new HttpError(400, 'Add a RentCast API key under Integrations → RentCast first.');
+    }
+    const row = await one(
+      `UPDATE properties SET auto_value_enabled = $3, auto_value_frequency = $4,
+              auto_value_last_error = CASE WHEN $3 THEN auto_value_last_error ELSE NULL END
+        WHERE id = $1 AND book_id = $2 RETURNING *`,
+      [prop.id, bookId, enabled, frequency]
+    );
+    res.json(row);
+  })
+);
+
+// Background job: record a RentCast value snapshot for each property with automatic
+// updates on whose period has passed since the last success. A failure is recorded
+// on the property (shown on its Value tab) and retried at most once a day, so a bad
+// key or a used-up quota doesn't burn requests every sweep.
+export async function runDuePropertyValuesSafe(): Promise<void> {
+  try {
+    const books = (await pool.query(`SELECT id FROM books ORDER BY id`)).rows as { id: number }[];
+    for (const b of books) {
+      const due = await withBookContext(b.id, () => query<any>(
+        `SELECT id, address, city, state, zip, square_feet, property_type FROM properties
+          WHERE book_id = $1 AND auto_value_enabled AND disposed_at IS NULL
+            AND (auto_value_last_success_at IS NULL OR auto_value_last_success_at <=
+                 now() - CASE auto_value_frequency WHEN 'weekly' THEN interval '7 days' ELSE interval '1 month' END)
+            AND (auto_value_last_attempt_at IS NULL OR auto_value_last_attempt_at <= now() - interval '23 hours')
+          ORDER BY id`,
+        [b.id]
+      ), { readOnly: true });
+      if (!due.length) continue;
+      const { key } = await withBookContext(b.id, () => resolveRentcastKey(b.id), { readOnly: true });
+      for (const p of due) {
+        let estimate: { value: number } | null = null;
+        let error: string | null = null;
+        const address = fullAddress(p);
+        if (!key) error = 'No RentCast API key. Add one under Integrations → RentCast.';
+        else if (!address || !p.address) error = 'This property has no street address.';
+        else {
+          // Network call outside any transaction (no connection held while waiting).
+          try { estimate = await rentcastValue(key, address, p.square_feet != null ? Number(p.square_feet) : null, p.property_type); }
+          catch (e: any) {
+            error = e instanceof HttpError ? e.message : 'Could not update the value automatically.';
+            if (!(e instanceof HttpError)) console.error(`automatic value update failed for property ${p.id}:`, e);
+          }
+        }
+        await withBookContext(b.id, async (client) => {
+          if (estimate) {
+            await client.query(
+              `INSERT INTO property_values (property_id, value, as_of, book_id, source)
+               VALUES ($1, $2, CURRENT_DATE, $3, 'rentcast')
+               ON CONFLICT (property_id, as_of) DO UPDATE SET value = EXCLUDED.value, source = EXCLUDED.source`,
+              [p.id, estimate.value, b.id]
+            );
+            await syncCurrentValue(client, p.id);
+          }
+          await client.query(
+            `UPDATE properties SET auto_value_last_attempt_at = now(),
+                    auto_value_last_success_at = CASE WHEN $3::text IS NULL THEN now() ELSE auto_value_last_success_at END,
+                    auto_value_last_error = $3
+              WHERE id = $1 AND book_id = $2`,
+            [p.id, b.id, error]
+          );
+        });
+      }
+    }
+  } catch (e) {
+    console.error('automatic property value sweep failed:', e);
+  }
+}
+
 // --- Value snapshots (value of the home on a date; latest = current value) ---
 properties.get(
   '/:id/values',
   ah(async (req, res) => {
     await ownedProperty(req);
     const rows = await query(
-      `SELECT id, to_char(as_of,'YYYY-MM-DD') AS as_of, value FROM property_values
+      `SELECT id, to_char(as_of,'YYYY-MM-DD') AS as_of, value, source FROM property_values
        WHERE property_id = $1 AND book_id = $2 ORDER BY as_of`,
       [req.params.id, hh(req)]
     );
@@ -461,13 +495,14 @@ properties.post(
     const { value, as_of } = req.body;
     optionalMoney(value, 'value');
     optionalDateOnly(as_of, 'as_of');
+    const source = optionalEnumValue(req.body?.source, 'source', VALUE_SOURCES) ?? 'manual';
     const row = await withTransaction(async (client) => {
       const r = (await client.query(
-        `INSERT INTO property_values (property_id, value, as_of, book_id)
-         VALUES ($1, $2, COALESCE($3, CURRENT_DATE), $4)
-         ON CONFLICT (property_id, as_of) DO UPDATE SET value = EXCLUDED.value
-         RETURNING id, to_char(as_of,'YYYY-MM-DD') AS as_of, value`,
-        [req.params.id, value, as_of ?? null, bookId]
+        `INSERT INTO property_values (property_id, value, as_of, book_id, source)
+         VALUES ($1, $2, COALESCE($3, CURRENT_DATE), $4, $5)
+         ON CONFLICT (property_id, as_of) DO UPDATE SET value = EXCLUDED.value, source = EXCLUDED.source
+         RETURNING id, to_char(as_of,'YYYY-MM-DD') AS as_of, value, source`,
+        [req.params.id, value, as_of ?? null, bookId, source]
       )).rows[0];
       await syncCurrentValue(client, Number(req.params.id));
       return r;
