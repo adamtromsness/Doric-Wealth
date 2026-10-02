@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Changed
+- **Add Transaction** now puts the cursor in the Amount field, so you can start typing the amount right away (#5).
+
 ## [1.4.0] - 2026-10-01
 
 ### Changed
