@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, registerUser } from './helpers.js';
+import { startServer, stopServer, registerUser, testDbClient } from './helpers.js';
 
 let base: string;
 before(async () => { base = await startServer(); });
@@ -105,13 +105,19 @@ test('book invites: create (role/expiry/max_uses), list, and revoke', async () =
   assert.equal(created.body.max_uses, 5);
   assert.ok(created.body.url.includes(created.body.code), 'the invite url embeds the code');
 
-  // An unknown/blank role falls back to 'member'; empty-string max_uses → null.
+  // An unknown/blank role falls back to 'member'; a blank max_uses gets the safe
+  // defaults: single use, expiring in 7 days.
   const memberInvite = await owner.client.post(`/api/books/${owner.bookId}/invites`, {
     role: 'superuser', max_uses: '',
   });
   assert.equal(memberInvite.status, 201);
   assert.equal(memberInvite.body.role, 'member');
-  assert.equal(memberInvite.body.max_uses, null);
+  assert.equal(memberInvite.body.max_uses, 1);
+  const days = (new Date(memberInvite.body.expires_at).getTime() - Date.now()) / 86_400_000;
+  assert.ok(days > 6.9 && days <= 7, `expires in ~7 days (got ${days})`);
+  // Invalid explicit limits are refused.
+  assert.equal((await owner.client.post(`/api/books/${owner.bookId}/invites`, { max_uses: 0 })).status, 400);
+  assert.equal((await owner.client.post(`/api/books/${owner.bookId}/invites`, { expires_at: '2000-01-01' })).status, 400);
 
   // The list shows active invites (owner/admin only).
   const list = await owner.client.get(`/api/books/${owner.bookId}/invites`);
@@ -129,4 +135,57 @@ test('book invites: create (role/expiry/max_uses), list, and revoke', async () =
   assert.ok(!after.some((r: any) => r.id === toRevoke), 'revoked invite is gone from the active list');
   // Non-manager cannot revoke.
   assert.equal((await stranger.client.del(`/api/books/${owner.bookId}/invites/${memberInvite.body.id}`)).status, 403);
+});
+
+// Join `owner`'s book as a new user with the given role (via an invite).
+async function joinAs(owner: any, role: 'member' | 'admin') {
+  const code = (await owner.client.post(`/api/books/${owner.bookId}/invites`, { role })).body.code;
+  const u = await registerUser(base);
+  assert.equal((await u.client.post(`/api/invites/${encodeURIComponent(code)}/accept`)).status, 200);
+  return u;
+}
+
+test('owners/admins can remove members; access ends on the next request', async () => {
+  const owner = await registerUser(base, { book_name: 'Shared' });
+  const member = await joinAs(owner, 'member');
+  const admin = await joinAs(owner, 'admin');
+  // The member is in the shared book (their active book after accepting).
+  assert.equal((await member.client.get('/api/auth/me')).body.activeBook.id, owner.bookId);
+  await owner.client.post('/api/accounts', { name: 'Shared Checking', type: 'checking' });
+  assert.ok((await member.client.get('/api/accounts')).body.some((a: any) => a.name === 'Shared Checking'));
+
+  // A plain member can't remove anyone else.
+  assert.equal((await member.client.del(`/api/books/${owner.bookId}/members/${admin.me.user.id}`)).status, 403);
+  // An admin can't remove the owner.
+  assert.equal((await admin.client.del(`/api/books/${owner.bookId}/members/${owner.me.user.id}`)).status, 403);
+
+  // The owner removes the member: their very next request no longer sees the shared book.
+  assert.equal((await owner.client.del(`/api/books/${owner.bookId}/members/${member.me.user.id}`)).status, 200);
+  const me = (await member.client.get('/api/auth/me')).body;
+  assert.ok(!me.books.some((b: any) => b.id === owner.bookId));
+  assert.notEqual(me.activeBook.id, owner.bookId, 'falls back to their own book');
+  assert.ok(!(await member.client.get('/api/accounts')).body.some((a: any) => a.name === 'Shared Checking'));
+  assert.equal((await owner.client.get(`/api/books/${owner.bookId}/members`)).body.length, 2);
+  assert.equal((await owner.client.del(`/api/books/${owner.bookId}/members/${member.me.user.id}`)).status, 404, 'already removed');
+});
+
+test('anyone can leave a book, but the last owner can neither leave nor be removed', async () => {
+  const owner = await registerUser(base, { book_name: 'Shared' });
+  const member = await joinAs(owner, 'member');
+  assert.equal((await member.client.del(`/api/books/${owner.bookId}/members/${member.me.user.id}`)).status, 200, 'member leaves');
+
+  const lastOwnerLeaves = await owner.client.del(`/api/books/${owner.bookId}/members/${owner.me.user.id}`);
+  assert.equal(lastOwnerLeaves.status, 409);
+  assert.match(lastOwnerLeaves.body.error, /only owner/);
+
+  // Promote a second owner directly, then either owner may go (but not both).
+  const second = await joinAs(owner, 'admin');
+  const db = testDbClient(); await db.connect();
+  try { await db.query(`UPDATE memberships SET role = 'owner' WHERE user_id = $1 AND book_id = $2`, [second.me.user.id, owner.bookId]); }
+  finally { await db.end(); }
+  assert.equal((await second.client.del(`/api/books/${owner.bookId}/members/${owner.me.user.id}`)).status, 200, 'an owner can remove another owner');
+  assert.equal((await second.client.del(`/api/books/${owner.bookId}/members/${second.me.user.id}`)).status, 409, 'now the last owner');
+  // A non-member gets 403.
+  const stranger = await registerUser(base);
+  assert.equal((await stranger.client.del(`/api/books/${owner.bookId}/members/${second.me.user.id}`)).status, 403);
 });

@@ -12,7 +12,7 @@ function FieldLabel({ children }: { children: ReactNode }) {
 }
 
 export default function Book() {
-  const { activeBook, refresh } = useAuth();
+  const { user, activeBook, refresh } = useAuth();
   const id = activeBook?.id;
   const canManage = activeBook?.role === 'owner' || activeBook?.role === 'admin';
   const [members, setMembers] = useState<Member[]>([]);
@@ -54,6 +54,26 @@ export default function Book() {
     try { await navigator.clipboard.writeText(absolute(inv.url)); setCopied(inv.id); setTimeout(() => setCopied(null), 1500); }
     catch { /* clipboard unavailable */ }
   };
+  // Remove a member (owners/admins), or leave these books yourself.
+  const ownerCount = members.filter((m) => m.role === 'owner').length;
+  const canRemove = (m: Member) => {
+    if (m.role === 'owner' && ownerCount <= 1) return false; // the last owner stays
+    if (m.id === user?.id) return true; // leaving
+    if (!canManage) return false;
+    return m.role !== 'owner' || activeBook?.role === 'owner';
+  };
+  const removeMember = async (m: Member) => {
+    const self = m.id === user?.id;
+    const question = self
+      ? `Leave ${activeBook?.name ?? 'these books'}? You'll lose access until someone invites you again.`
+      : `Remove ${m.name || m.email} from ${activeBook?.name ?? 'these books'}? They'll lose access right away.`;
+    if (!confirm(question)) return;
+    setErr('');
+    try {
+      await api.del(`/books/${id}/members/${m.id}`);
+      if (self) await refresh(); else load();
+    } catch (e: any) { setErr(e.message); }
+  };
   const createBook = async () => {
     if (!newName.trim()) return;
     try { await api.post('/books', { name: newName.trim() }); setNewName(''); await refresh(); }
@@ -90,7 +110,7 @@ export default function Book() {
         <SectionHeader kind="income" title="Members" />
         <div className="card" style={{ padding: 0 }}>
           <table className="ledger">
-            <thead><tr><th>Member</th><th>Email</th><th>Role</th><th>Joined</th><th>Last Login</th></tr></thead>
+            <thead><tr><th>Member</th><th>Email</th><th>Role</th><th>Joined</th><th>Last Login</th><th></th></tr></thead>
             <tbody>
               {members.map((m) => (
                 <tr key={m.id}>
@@ -99,6 +119,13 @@ export default function Book() {
                   <td>{m.role}</td>
                   <td className="num">{shortDate(m.created_at)}</td>
                   <td className="num muted">{m.last_login_at ? shortDate(m.last_login_at) : '—'}</td>
+                  <td className="r" style={{ whiteSpace: 'nowrap' }}>
+                    {canRemove(m) && (
+                      <button className="ghost" style={{ padding: '2px 8px' }} onClick={() => removeMember(m)}>
+                        {m.id === user?.id ? 'Leave' : 'Remove'}
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -110,20 +137,21 @@ export default function Book() {
         <div style={{ marginBottom: 28 }}>
           <SectionHeader kind="expense" title="Invite user" action={<button onClick={createInvite}>New Invite Link</button>} />
           <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
-            Share a link to invite someone to these books. Anyone who opens it can create an account (or sign in) and get access.
+            Share a link to invite someone to these books. Each link works once and expires after 7 days, so send a new link for each person.
           </p>
           {invites.length === 0 ? (
             <div className="card"><div className="empty">No active invites. Create a link to share.</div></div>
           ) : (
             <div className="card" style={{ padding: 0 }}>
               <table className="ledger">
-                <thead><tr><th>Invite Link</th><th>Role</th><th>Uses</th><th></th></tr></thead>
+                <thead><tr><th>Invite Link</th><th>Role</th><th>Uses</th><th>Expires</th><th></th></tr></thead>
                 <tbody>
                   {invites.map((inv) => (
                     <tr key={inv.id}>
                       <td><code style={{ fontSize: 12 }}>{absolute(inv.url)}</code></td>
                       <td>{inv.role}</td>
                       <td className="num">{inv.uses}{inv.max_uses != null ? ` / ${inv.max_uses}` : ''}</td>
+                      <td className="num">{inv.expires_at ? shortDate(inv.expires_at) : 'Never'}</td>
                       <td className="r" style={{ whiteSpace: 'nowrap' }}>
                         <button className="ghost" style={{ padding: '2px 8px' }} onClick={() => copy(inv)}>{copied === inv.id ? 'Copied!' : 'Copy'}</button>
                         <button className="ghost" style={{ padding: '2px 8px', marginLeft: 6 }} onClick={() => revoke(inv.id)}>Revoke</button>

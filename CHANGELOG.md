@@ -14,6 +14,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Added
+- **My Books → Members** has **Remove** (for owners and admins) and **Leave** buttons. Removing someone ends their access on their next action. The last owner can't be removed or leave.
+
+### Changed
+- **Invite links** now work once and expire after 7 days by default, and the invite list shows each link's use count and expiry date. Before, links worked any number of times until revoked.
+
 ## [1.8.0] - 2026-10-05
 
 ### Added

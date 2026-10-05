@@ -4,6 +4,7 @@ import { ah, require_, HttpError } from '../http.js';
 import { hashToken, newInviteCode } from '../auth.js';
 import { requireAuth, membershipRole, mePayload } from '../tenant.js';
 import { config } from '../config.js';
+import { integerId } from '../validation.js';
 
 export const books = Router();
 
@@ -99,9 +100,43 @@ books.get(
   })
 );
 
+// Remove someone from a book, or leave it yourself. Owners and admins can remove
+// members; only an owner can remove another owner; the last owner can't be removed
+// (or leave). Access ends on the removed person's next request: every request
+// re-checks membership (tenant.ts authContext).
+books.delete(
+  '/:id/members/:userId',
+  ah(async (req, res) => {
+    const bookId = integerId(req.params.id, 'id');
+    const targetId = integerId(req.params.userId, 'userId');
+    const self = targetId === req.user!.id;
+    const myRole = await membershipRole(req.user!.id, bookId);
+    if (!myRole) throw new HttpError(403, 'You are not a member of that book.');
+    await withTransaction(async (client) => {
+      // Lock the book's memberships so two removals can't both pass the last-owner check.
+      const members = (await client.query(`SELECT user_id, role FROM memberships WHERE book_id = $1 FOR UPDATE`, [bookId])).rows;
+      const target = members.find((m: any) => m.user_id === targetId);
+      if (!target) throw new HttpError(404, 'That person is not a member of these books.');
+      if (!self) {
+        if (myRole !== 'owner' && myRole !== 'admin') throw new HttpError(403, 'Only an owner or admin can remove members.');
+        if (target.role === 'owner' && myRole !== 'owner') throw new HttpError(403, 'Only an owner can remove another owner.');
+      }
+      if (target.role === 'owner' && members.filter((m: any) => m.role === 'owner').length === 1) {
+        throw new HttpError(409, self
+          ? "You're the only owner of these books, so you can't leave them. Make someone else an owner first."
+          : "That's the only owner of these books, so they can't be removed.");
+      }
+      await client.query(`DELETE FROM memberships WHERE book_id = $1 AND user_id = $2`, [bookId, targetId]);
+    });
+    res.json({ ok: true });
+  })
+);
+
 function inviteUrl(code: string): string {
   return config.appBaseUrl ? `${config.appBaseUrl.replace(/\/$/, '')}/accept?code=${code}` : `/accept?code=${code}`;
 }
+
+export const INVITE_DAYS = 7;
 
 // Create a shareable invite for the book (owner/admin only).
 books.post(
@@ -110,8 +145,18 @@ books.post(
     const bookId = Number(req.params.id);
     await requireManager(req, bookId);
     const role = req.body?.role === 'admin' ? 'admin' : 'member';
-    const expires_at = req.body?.expires_at ? new Date(req.body.expires_at) : null;
-    const max_uses = req.body?.max_uses != null && req.body.max_uses !== '' ? Number(req.body.max_uses) : null;
+    // Safe defaults: a link works once and expires in INVITE_DAYS, so a forwarded or
+    // leaked link can't be used indefinitely. Explicit values may be passed.
+    let expires_at = new Date(Date.now() + INVITE_DAYS * 86_400_000);
+    if (req.body?.expires_at != null && req.body.expires_at !== '') {
+      expires_at = new Date(req.body.expires_at);
+      if (Number.isNaN(expires_at.getTime()) || expires_at.getTime() <= Date.now()) throw new HttpError(400, 'expires_at must be a future date.');
+    }
+    let max_uses = 1;
+    if (req.body?.max_uses != null && req.body.max_uses !== '') {
+      max_uses = Number(req.body.max_uses);
+      if (!Number.isInteger(max_uses) || max_uses < 1 || max_uses > 50) throw new HttpError(400, 'max_uses must be a whole number from 1 to 50.');
+    }
     const code = newInviteCode();
     const row = await one<any>(
       `INSERT INTO invites (book_id, code, role, created_by, expires_at, max_uses)
