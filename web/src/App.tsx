@@ -34,6 +34,7 @@ const Register = lazy(() => import('./pages/Register'));
 const AcceptInvite = lazy(() => import('./pages/AcceptInvite'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const Privacy = lazy(() => import('./pages/Privacy'));
 const Book = lazy(() => import('./pages/Book'));
 const Account = lazy(() => import('./pages/Account'));
 const MyData = lazy(() => import('./pages/MyData'));
@@ -97,6 +98,7 @@ export default function App() {
           <Route path="/accept" element={<AcceptInvite />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
+          <Route path="/privacy" element={<Privacy />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </Suspense>
@@ -136,6 +138,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/changelog" element={<Changelog />} />
+          <Route path="/privacy" element={<Privacy />} />
           <Route path="/goals" element={<Goals />} />
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/budgets" element={<Budgets />} />

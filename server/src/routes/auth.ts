@@ -54,7 +54,7 @@ auth.get(
   '/signup-config',
   ah(async (_req, res) => {
     const anyUser = await one(`SELECT 1 FROM users LIMIT 1`);
-    res.json({ invite_only: config.signupMode === 'invite', first_account: !anyUser });
+    res.json({ invite_only: config.signupMode === 'invite', first_account: !anyUser, contact_email: config.contactEmail || null });
   })
 );
 

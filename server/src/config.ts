@@ -44,6 +44,9 @@ export const config = {
   // invite-only in production and open otherwise (dev, tests); any other value fails
   // closed to 'invite'.
   signupMode: ((process.env.SIGNUP_MODE ?? (process.env.NODE_ENV === 'production' ? 'invite' : 'open')) === 'open' ? 'open' : 'invite') as 'open' | 'invite',
+  // Who pilot users contact about their data (shown on the Privacy page). Optional;
+  // without it the page says to contact the person who invited them.
+  contactEmail: process.env.CONTACT_EMAIL ?? '',
   // Outgoing email (password reset links), over SMTP: OCI Email Delivery, Amazon SES,
   // or any SMTP relay. Email is off unless SMTP_HOST and MAIL_FROM are set; then
   // "Forgot password?" emails a link instead of telling the user to ask the operator.

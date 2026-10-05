@@ -75,7 +75,10 @@ export default function Register() {
           <button type="submit" disabled={busy}>{busy ? 'Creating…' : 'Create Account'}</button>
         </div>
       </form>
-      <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
+      <p className="muted" style={{ fontSize: 12, marginTop: 12 }}>
+        By creating an account, you agree to how Doric handles your data: see <Link to="/privacy">Privacy</Link>.
+      </p>
+      <p className="muted" style={{ fontSize: 13, marginTop: 8 }}>
         Already have an account? <Link to={urlCode ? `/login?code=${encodeURIComponent(urlCode)}` : '/login'}>Sign in</Link>
       </p>
     </AuthShell>

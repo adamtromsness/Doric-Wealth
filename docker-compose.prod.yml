@@ -51,6 +51,8 @@ services:
       TRUST_PROXY: "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       RENTCAST_API_KEY: ${RENTCAST_API_KEY:-}
+      # Shown on the Privacy page as the contact for questions and data deletion.
+      CONTACT_EMAIL: ${CONTACT_EMAIL:-}
       # Outgoing email for password reset links (off unless SMTP_HOST and MAIL_FROM are set).
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}

@@ -45,6 +45,7 @@ export default function Login() {
         {inviteOnly && !code ? 'Have an invite? ' : 'No account? '}
         <Link to={code ? `/register?code=${encodeURIComponent(code)}` : '/register'}>{inviteOnly && !code ? 'Create your account' : 'Create one'}</Link>
       </p>
+      <p className="muted" style={{ fontSize: 12, marginTop: 8 }}><Link to="/privacy">Privacy</Link></p>
     </AuthShell>
   );
 }
