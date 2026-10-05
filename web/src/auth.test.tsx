@@ -6,9 +6,9 @@ import { AuthProvider, useAuth, displayName } from './auth';
 // Mock the api module the provider depends on.
 vi.mock('./api', () => {
   const api = { get: vi.fn(), post: vi.fn(), put: vi.fn() };
-  return { api, setUnauthorizedHandler: vi.fn(), setExpectedBook: vi.fn(), setBookChangedHandler: vi.fn() };
+  return { api, setUnauthorizedHandler: vi.fn(), setExpectedBook: vi.fn(), setBookChangedHandler: vi.fn(), setBookSwitching: vi.fn() };
 });
-import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler } from './api';
+import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching } from './api';
 
 const meFixture = {
   user: { id: 1, email: 'a@b.com', name: 'Ada', timezone: 'America/New_York' },
@@ -23,6 +23,8 @@ function Probe() {
     <div>
       <div data-testid="user">{a.user ? a.user.email : 'anon'}</div>
       <div data-testid="active">{a.activeBook?.name ?? 'none'}</div>
+      <div data-testid="notice">{a.bookNotice ?? ''}</div>
+      <button onClick={() => a.dismissBookNotice()}>dismiss</button>
       <button onClick={() => a.login('a@b.com', 'pw')}>login</button>
       <button onClick={() => a.register({ email: 'n@b.com', password: 'pw' })}>register</button>
       <button onClick={() => a.logout()}>logout</button>
@@ -63,9 +65,15 @@ describe('AuthProvider', () => {
     await waitFor(() => expect(setExpectedBook).toHaveBeenCalledWith(meFixture.activeBook.id));
     const handler = (setBookChangedHandler as any).mock.calls[0][0];
     (api.get as any).mockResolvedValue({ ...meFixture, activeBook: { id: 2, name: 'Cabin', role: 'owner' } });
+    expect(setBookSwitching).not.toHaveBeenCalledWith(true);
     handler();
     await waitFor(() => expect(screen.getByTestId('active')).toHaveTextContent('Cabin'));
     expect(setExpectedBook).toHaveBeenLastCalledWith(2);
+    // Requests are held until the interface is rebuilt for the new book (App does that).
+    expect(setBookSwitching).toHaveBeenCalledWith(true);
+    expect(screen.getByTestId('notice')).toHaveTextContent(/Another tab switched to Cabin.*hadn't saved here was cleared/);
+    await userEvent.setup().click(screen.getByText('dismiss'));
+    expect(screen.getByTestId('notice')).toHaveTextContent('');
   });
 
   it('falls back to anonymous when /auth/me fails', async () => {

@@ -3,7 +3,7 @@ import {
   money, parseLocalDate, shortDate, todayStr, isHttpUrl, normalizeUrl, isOpenableUrl,
   formatPhone, accountTypeLabel, propertyTypeLabel, disposalTypeLabel, propertyDisposalTypeLabel,
   ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES,
-  api, apiStream, apiBlob, apiDownload, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler,
+  api, apiStream, apiBlob, apiDownload, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching,
 } from './api';
 
 // ── Pure formatters ────────────────────────────────────────────────────────
@@ -160,6 +160,25 @@ describe('api client', () => {
     await api.get('/y');
     expect(fetchMock.mock.calls[2][1].headers['x-book-id']).toBeUndefined();
     setBookChangedHandler(null);
+  });
+
+  it('while the tab changes books, nothing but the session calls is sent', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ json: {} }));
+    setBookSwitching(true);
+    try {
+      await expect(api.post('/accounts', { name: 'Old draft' })).rejects.toThrow('This tab is changing books');
+      await expect(apiStream('/connections/import/stream', {}, () => {})).rejects.toThrow('changing books');
+      await expect(apiBlob('/backup/export')).rejects.toThrow('changing books');
+      await expect(apiDownload('/backup/export', 'x.json')).rejects.toThrow('changing books');
+      expect(fetchMock).not.toHaveBeenCalled();
+      await api.get('/auth/me');
+      await api.post('/books/switch', { book_id: 2 });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      setBookSwitching(false);
+    }
+    await api.post('/accounts', { name: 'New' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('GET returns parsed JSON and sends credentials + content-type', async () => {

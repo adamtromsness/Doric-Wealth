@@ -15,6 +15,16 @@ export function setExpectedBook(id: number | null) { expectedBookId = id; }
 let onBookChanged: (() => void) | null = null;
 export function setBookChangedHandler(fn: (() => void) | null) { onBookChanged = fn; }
 
+// While this tab changes books, requests are held back until the interface has been
+// rebuilt for the new book (App keys it by book; BookScope lifts the hold), so nothing
+// entered for the old book, like a half-filled form or a retry, can reach the new one.
+// The session calls that make the change still go through.
+let switchingBook = false;
+export function setBookSwitching(on: boolean) { switchingBook = on; }
+function holdDuringBookSwitch(path: string) {
+  if (switchingBook && !/^\/(auth\/|books\/switch)/.test(path)) throw new Error('This tab is changing books. Try again in a moment.');
+}
+
 function baseHeaders(): Record<string, string> {
   return {
     ...(API_TOKEN ? { 'x-api-token': API_TOKEN } : {}),
@@ -23,6 +33,7 @@ function baseHeaders(): Record<string, string> {
 }
 
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  holdDuringBookSwitch(path);
   const res = await fetch(BASE + path, {
     ...opts,
     credentials: 'include', // send the session cookie
@@ -61,6 +72,7 @@ export const api = {
 // POST and read a newline-delimited-JSON (NDJSON) stream, invoking `onEvent` for each
 // parsed line as it arrives. Used for long operations that report live progress.
 export async function apiStream(path: string, body: unknown, onEvent: (ev: any) => void): Promise<void> {
+  holdDuringBookSwitch(path);
   const res = await fetch(BASE + path, {
     method: 'POST',
     credentials: 'include',
@@ -99,12 +111,14 @@ export async function apiStream(path: string, body: unknown, onEvent: (ev: any) 
 // Fetch a path and return its body as a Blob (no browser "Save as"). Used to write a
 // file into a directory the user granted via the File System Access API.
 export async function apiBlob(path: string): Promise<Blob> {
+  holdDuringBookSwitch(path);
   const res = await fetch(BASE + path, { credentials: 'include', headers: { ...baseHeaders() } });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   return res.blob();
 }
 
 export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  holdDuringBookSwitch(path);
   const res = await fetch(BASE + path, { credentials: 'include', headers: { ...baseHeaders() } });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const cd = res.headers.get('content-disposition') ?? '';

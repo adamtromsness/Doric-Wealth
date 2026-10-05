@@ -132,6 +132,13 @@ async function full() {
     const refused = stale.waitForResponse((r) => r.url().endsWith('/api/accounts') && r.request().method() === 'POST');
     await stale.getByRole('button', { name: 'Add Account' }).last().click();
     check((await refused).status() === 409, 'a write from the stale tab was not refused');
+    // The stale tab follows to the new book, says so, and drops the old draft, so a
+    // retry can't send it to the new book.
+    await stale.getByText(/Another tab switched to Second Book/).waitFor();
+    check(new URL(stale.url()).pathname === '/', 'the stale tab stayed on the old page');
+    check(await stale.getByPlaceholder('Everyday Checking').count() === 0, 'the stale draft is still on screen');
+    await stale.goto(`${base}/accounts`);
+    await stale.getByRole('heading', { name: 'Accounts', level: 1 }).waitFor();
     const names = await page.evaluate(async () => (await (await fetch('/api/accounts')).json()).map((a) => a.name));
     check(!names.includes('Stale Tab Account'), 'the stale tab wrote into the other book');
     step('a stale tab cannot write into another book');
