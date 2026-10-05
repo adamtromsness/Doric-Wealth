@@ -12,7 +12,10 @@ cd "$(dirname "$0")/../.."
 ENV_FILE=.env.production
 [ -f "$ENV_FILE" ] || { echo "Missing $ENV_FILE" >&2; exit 1; }
 dc() { docker compose -f docker-compose.prod.yml --env-file "$ENV_FILE" "$@"; }
-envval() { grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2-; }
+# A setting's value; empty (not an error) when the file doesn't set it, since optional
+# settings like OFFSITE_BUCKET may be absent (grep exits 1 then, which pipefail
+# would otherwise turn into a silent exit).
+envval() { { grep -E "^$1=" "$ENV_FILE" || true; } | tail -1 | cut -d= -f2-; }
 die() { echo "restore-drill: $*" >&2; exit 1; }
 DRILL_DB=doric_drill
 psql_admin() { dc exec -T db psql -U doric_admin -v ON_ERROR_STOP=1 "$@"; }

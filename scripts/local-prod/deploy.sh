@@ -36,7 +36,9 @@ fi
 if [ "${SKIP_RESTORE_DRILL:-}" != 1 ]; then
   drill=.release-state/restore-drill
   [ -f "$drill" ] || { echo "No restore drill on record. Run scripts/local-prod/restore-drill.sh first." >&2; exit 1; }
-  age=$(( ($(date +%s) - $(grep '^epoch=' "$drill" | cut -d= -f2)) / 86400 ))
+  epoch="$({ grep '^epoch=' "$drill" || true; } | cut -d= -f2)"
+  [ -n "$epoch" ] || { echo "$drill is incomplete. Run scripts/local-prod/restore-drill.sh again." >&2; exit 1; }
+  age=$(( ($(date +%s) - epoch) / 86400 ))
   [ "$age" -le 30 ] || { echo "The last restore drill was $age days ago (limit 30). Run scripts/local-prod/restore-drill.sh." >&2; exit 1; }
   if grep -qE '^OFFSITE_BUCKET=.+' "$ENV_FILE" && ! grep -q '^backup_source=off-machine' "$drill"; then
     echo "Backups go to a bucket, but the last restore drill used the local folder. Run scripts/local-prod/restore-drill.sh again." >&2
