@@ -140,7 +140,7 @@ export const VEHICLE_DISPOSAL_TYPES = ['sold', 'traded_in', 'scrapped', 'totaled
 // How a property left ownership when retired (preserves history; not deleted).
 export const PROPERTY_DISPOSAL_TYPES = ['sold', 'transferred', 'foreclosed', 'gifted', 'other'] as const;
 export const TXN_DIRECTIONS = ['expense', 'income', 'transfer'] as const;
-export const CHANNELS = ['in_store', 'online', 'phone', 'mail', 'check'] as const;
+export const CHANNELS = ['in_store', 'online', 'phone', 'mail', 'check', 'direct_deposit'] as const;
 export const BUDGET_PERIODS = ['weekly', 'monthly', 'yearly', 'custom'] as const;
 export const ROLLOVER_MODES = ['reset', 'carryover', 'accrue'] as const;
 export const TAG_KINDS = ['vehicle', 'property', 'tag', 'subscription'] as const;

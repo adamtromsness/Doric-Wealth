@@ -122,3 +122,10 @@ describe('TxnFilterBar', () => {
     expect(screen.getByLabelText('Clear search')).toBeInTheDocument();
   });
 });
+
+describe('channel options', async () => {
+  const { CHANNEL_OPTIONS } = await import('./txnFilters');
+  it('include Direct Deposit', () => {
+    expect(CHANNEL_OPTIONS).toContainEqual(['direct_deposit', 'Direct Deposit']);
+  });
+});

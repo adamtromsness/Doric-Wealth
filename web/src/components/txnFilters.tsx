@@ -12,7 +12,7 @@ export const AMOUNT_OPS: [AmountOp, string][] = [
   ['', 'Any'], ['gt', 'Greater Than'], ['lt', 'Less Than'], ['between', 'Between'], ['eq', 'Exact'],
 ];
 export const CHANNEL_OPTIONS: [string, string][] = [
-  ['in_store', 'In Store'], ['online', 'Online'], ['phone', 'Phone'], ['mail', 'Mail'], ['check', 'Check'],
+  ['in_store', 'In Store'], ['online', 'Online'], ['phone', 'Phone'], ['mail', 'Mail'], ['check', 'Check'], ['direct_deposit', 'Direct Deposit'],
 ];
 
 export interface Filters {
