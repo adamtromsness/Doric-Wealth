@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-10-05
+
 ### Added
 - **My Books → Members** has **Remove** (for owners and admins) and **Leave** buttons. Removing someone ends their access on their next action. The last owner can't be removed or leave.
 - **Account deletion** for operators: `deleteAccount.js` (locally `scripts/local-prod/delete-account.sh`) deletes a person's account and the books only they belong to, and removes them from shared books. It shows what it will do first, and a shared book they solely own needs a new owner named.
