@@ -266,3 +266,52 @@ test('utility accounts are tenant-isolated (another book cannot touch them)', as
   assert.equal((await b.client.post(`/api/utilities/accounts/${id}/cancel`, {})).status, 404);
   assert.equal((await b.client.get(`/api/utilities/accounts/${id}/documents`)).status, 404);
 });
+
+test('linking an existing transaction pays only what it paid, once, and only if it is an expense', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const gas = (await client.post('/api/utilities/accounts', { name: 'Gas', utility_type: 'gas' })).body.id;
+  const invoice = (amount: number, payment_transaction_id: number) => client.post('/api/utilities/invoices', {
+    provider: 'Gas Co', account_id: acct, paid: true, payment_transaction_id,
+    lines: [{ amount, utility_account_id: gas, description: 'Gas' }],
+  });
+  const find = async (id: number) => (await client.get('/api/utilities/invoices')).body.find((i: any) => i.id === id);
+
+  // A $10 payment can't settle a $100 bill.
+  const ten = (await client.post('/api/transactions', { amount: 10, account_id: acct, direction: 'expense', txn_date: '2026-07-01' })).body.id;
+  const big = await invoice(100, ten);
+  assert.equal(big.status, 201);
+  assert.equal((await find(big.body.id)).paid, false, 'only $10 of $100 is covered');
+
+  // The same transaction can't cover another bill: it's used up.
+  const again = await invoice(5, ten);
+  assert.equal(again.status, 409);
+  assert.match(again.body.error, /already fully applied/);
+
+  // A $60 payment covers a $40 bill and leaves $20 for another.
+  const sixty = (await client.post('/api/transactions', { amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-02' })).body.id;
+  assert.equal((await find((await invoice(40, sixty)).body.id)).paid, true);
+  assert.equal((await find((await invoice(20, sixty)).body.id)).paid, true);
+  assert.equal((await invoice(1, sixty)).status, 409);
+
+  // Income can't be a bill payment.
+  const refund = (await client.post('/api/transactions', { amount: 50, account_id: acct, direction: 'income', txn_date: '2026-07-03' })).body.id;
+  const r = await invoice(50, refund);
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /Only an expense/);
+});
+
+test('marking a bill paid records a posted payment on the paid date', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking', opening_balance: 500 })).body.id;
+  const inv = await client.post('/api/utilities/invoices', {
+    provider: 'Water Co', account_id: acct, paid: true, paid_date: '2026-07-15',
+    lines: [{ amount: 45, description: 'Water' }],
+  });
+  assert.equal(inv.status, 201);
+  const list = (await client.get('/api/transactions?limit=10')).body;
+  assert.equal(list.pending.length, 0, 'not left pending');
+  const pay = list.posted.find((t: any) => t.description === 'Utility payment');
+  assert.equal(String(pay.posted_date).slice(0, 10), '2026-07-15');
+  assert.equal(Number((await client.get(`/api/accounts/${acct}`)).body.posted_balance), 455, 'the posted balance reflects the payment');
+});

@@ -462,9 +462,11 @@ async function payInvoiceInFull(client: any, invoiceId: number, paidDate: string
     )).rows[0]?.id ?? null;
 
   // Record the payment transaction (its id is reused for the payment + tags below).
+  // Marking a bill paid records a payment that happened, so it posts on the payment
+  // date (it affects the account balance like any posted expense).
   const recordPayment = async (categoryId: number | null) => (await client.query(
-    `INSERT INTO transactions (account_id, category_id, txn_date, amount, direction, merchant, description, channel, book_id)
-     VALUES ($1,$2,$3,$4,'expense',$5,'Utility payment',$6,$7) RETURNING id`,
+    `INSERT INTO transactions (account_id, category_id, txn_date, posted_date, amount, direction, merchant, description, channel, book_id)
+     VALUES ($1,$2,$3,$3,$4,'expense',$5,'Utility payment',$6,$7) RETURNING id`,
     [inv.account_id, categoryId, date, outstanding, merchant, channel ?? inv.channel ?? null, bookId]
   )).rows[0].id as number;
   const linkPayment = (txnId: number) => client.query(
@@ -517,9 +519,10 @@ async function payInvoiceInFull(client: any, invoiceId: number, paidDate: string
   await recomputeInvoicePaid(client, invoiceId, bookId);
 }
 
-// Mark an invoice's remaining balance paid by LINKING an existing transaction
-// instead of creating a new one. Records a (non-auto) payment that references it and
-// surfaces it on the invoice's property. No-op if already covered or already linked.
+// Pay an invoice by LINKING an existing expense instead of creating a new one. Records
+// a (non-auto) payment for up to the transaction's remaining amount (its amount less
+// what it already pays on other invoices) and surfaces it on the invoice's property.
+// No-op if already covered or already linked.
 async function payInvoiceWithExisting(client: any, invoiceId: number, transactionId: number, bookId: number): Promise<void> {
   const inv = (await client.query(
     `SELECT i.id,
@@ -529,20 +532,31 @@ async function payInvoiceWithExisting(client: any, invoiceId: number, transactio
     [invoiceId, bookId]
   )).rows[0];
   if (!inv) return;
+  // Lock the transaction so two invoices can't both claim the same remaining amount.
   const txn = (await client.query(
-    `SELECT id, to_char(txn_date,'YYYY-MM-DD') AS txn_date FROM transactions WHERE id = $1 AND book_id = $2`,
+    `SELECT id, direction, amount, to_char(txn_date,'YYYY-MM-DD') AS txn_date FROM transactions WHERE id = $1 AND book_id = $2 FOR UPDATE`,
     [transactionId, bookId]
   )).rows[0];
   if (!txn) throw new HttpError(404, 'Linked transaction not found.');
+  if (txn.direction !== 'expense') throw new HttpError(400, 'Only an expense (money going out) can be linked as a bill payment.');
   const outstanding = Number(inv.total) - Number(inv.paid_amt);
   if (outstanding <= 0.005) { await recomputeInvoicePaid(client, invoiceId, bookId); return; }
 
   const already = (await client.query(`SELECT 1 FROM utility_invoice_payments WHERE invoice_id = $1 AND transaction_id = $2 AND book_id = $3 LIMIT 1`, [invoiceId, transactionId, bookId])).rows[0];
   if (!already) {
+    // A payment can only cover what the transaction actually paid, less what it
+    // already covers on other invoices. Credit up to the outstanding balance.
+    const usedElsewhere = Number((await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS used FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2`,
+      [transactionId, bookId]
+    )).rows[0].used);
+    const available = Math.round((Number(txn.amount) - usedElsewhere) * 100) / 100;
+    if (available <= 0.005) throw new HttpError(409, 'That transaction is already fully applied to other bills.');
+    const credit = Math.min(outstanding, available);
     await client.query(
       `INSERT INTO utility_invoice_payments (invoice_id, transaction_id, amount, paid_date, auto_txn, book_id)
        VALUES ($1,$2,$3,$4,false,$5)`,
-      [invoiceId, transactionId, outstanding, txn.txn_date, bookId]
+      [invoiceId, transactionId, credit, txn.txn_date, bookId]
     );
 
     // Linked-transaction enrichment is additive only — never touch a split transaction.

@@ -21,6 +21,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 - If you switch books in one tab, other open tabs now refresh to that book instead of saving into it unexpectedly. A change made in a tab that was still showing the old book is stopped with a message, so you can check it and try again.
 - **Invite links** now work once and expire after 7 days by default, and the invite list shows each link's use count and expiry date. Before, links worked any number of times until revoked.
 
+### Fixed
+- **Utility bills:** linking an existing transaction as a bill's payment now counts only what that transaction actually paid, can't reuse the same payment across bills beyond its amount, and only accepts expenses.
+- **Utility bills:** marking a bill paid now records the payment as posted on the paid date, so the account balance reflects it. Before, the payment sat in Pending.
+
 ## [1.8.0] - 2026-10-05
 
 ### Added
