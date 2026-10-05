@@ -52,6 +52,11 @@ export const config = {
   // Who pilot users contact about their data (shown on the Privacy page). Optional;
   // without it the page says to contact the person who invited them.
   contactEmail: process.env.CONTACT_EMAIL ?? '',
+  // How the server's backups are set up, for the Privacy page (the backup jobs run
+  // beside the app, so it's told): days each backup is kept (unset = not stated),
+  // and whether copies go off the server.
+  backupKeepDays: Number(process.env.BACKUP_KEEP_DAYS) > 0 ? Number(process.env.BACKUP_KEEP_DAYS) : null,
+  offsiteBackups: !!process.env.OFFSITE_BUCKET,
   // Outgoing email (password reset links), over SMTP: OCI Email Delivery, Amazon SES,
   // or any SMTP relay. Email is off unless SMTP_HOST and MAIL_FROM are set; then
   // "Forgot password?" emails a link instead of telling the user to ask the operator.

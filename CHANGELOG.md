@@ -16,9 +16,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ### Added
 - **My Books → Members** has **Remove** (for owners and admins) and **Leave** buttons. Removing someone ends their access on their next action. The last owner can't be removed or leave.
+- **Account deletion** for operators: `deleteAccount.js` (locally `scripts/local-prod/delete-account.sh`) deletes a person's account and the books only they belong to, and removes them from shared books. It shows what it will do first, and a shared book they solely own needs a new owner named.
 
 ### Changed
 - If you switch books in one tab, other open tabs now refresh to that book instead of saving into it unexpectedly. A change made in a tab that was still showing the old book is stopped with a message, so you can check it and try again.
+- **Privacy** page: it now describes the background work you can turn on (scheduled bank imports and automatic property values), explains what deleting an account removes and how long deleted data stays in backups, and states HTTPS and the backup schedule only when this server is set up that way.
 - **Bank imports (SimpleFIN)** bring in transactions once they post. Pending ones are left until then, and the **Include pending transactions** option is gone for now. Before, a pending charge was imported as final, so its posted amount and date never arrived.
 - **Invite links** now work once and expire after 7 days by default, and the invite list shows each link's use count and expiry date. Before, links worked any number of times until revoked.
 

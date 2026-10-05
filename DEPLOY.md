@@ -47,6 +47,9 @@ Set on the ECS task definition. The image already defaults `NODE_ENV=production`
 | `DB_POOL_MAX` | `20` | max pooled connections (one per in-flight request) |
 | `APP_BASE_URL` | `https://app.example.com` | builds absolute invite links |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | optional | outgoing email for password reset links (any SMTP relay: OCI Email Delivery, Amazon SES, …). Without them, "Forgot password?" tells the user to ask the operator, who runs `node dist/passwordReset.js person@example.com` to get a 24-hour, one-time link. Needs `APP_BASE_URL` for the links. |
+| `CONTACT_EMAIL` | optional | shown on the Privacy page as who to contact about data and account deletion (without it: "the person who invited you") |
+| `BACKUP_KEEP_DAYS` | optional | days each server backup is kept. Set it to match your backup retention: the Privacy page states it (daily backups, kept this long) and that deleted data lasts that long in backups. Unset, the page makes no backup claim. |
+| `OFFSITE_BUCKET` | optional | set when backups are copied off the server (see "Off-machine backup copies"); the Privacy page then says so |
 | `SIMPLEFIN_ALLOWED_HOSTS` | optional | comma-separated SimpleFIN servers the app may contact (default `bridge.simplefin.org,beta-bridge.simplefin.org`). Setup tokens and access URLs for any other host are refused, and redirects aren't followed. |
 | `SIGNUP_MODE` | `invite` (default in prod) | `invite`: sign-up needs a signup invite or a book invite code (the first account on an empty database is exempt). `open`: anyone can sign up. Unknown values fail closed to `invite`. |
 | `COOKIE_SECURE` | `true` (default in prod) | session cookie sent over HTTPS only |
@@ -119,6 +122,24 @@ node dist/signupInvites.js revoke <id>
 To add someone to one of your books instead, use **My Books → New Invite Link** in the
 app; that link also works for sign-up. (Locally: `scripts/local-prod/invite.sh` with the
 same arguments.)
+
+## 5c. Delete an account (on request)
+
+The Privacy page tells people to ask the operator to delete their account. Run it
+first without `--yes` to see what it will do:
+
+```bash
+node dist/deleteAccount.js person@example.com            # dry run
+node dist/deleteAccount.js person@example.com --yes      # delete
+```
+
+It deletes the account and every book only that person belongs to, with all data in
+them, and removes them from books shared with others (those stay with the other
+members). If they're the only owner of a shared book, it refuses until you name a
+member of that book to take it over: `--new-owner other@example.com`. Their data
+remains in server backups (and off-machine copies) until those expire after
+`BACKUP_KEEP_DAYS`. (Locally: `scripts/local-prod/delete-account.sh` with the same
+arguments.)
 
 ## 6. ECS Fargate service + ALB
 
