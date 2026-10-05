@@ -61,6 +61,11 @@ describe('Register page', () => {
     expect(screen.getByRole('link', { name: 'Sign in' })).toHaveAttribute('href', '/login');
   });
 
+  it('links to the privacy notice', () => {
+    renderAt();
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
+  });
+
   it('rejects passwords shorter than 8 characters without calling register', async () => {
     const user = userEvent.setup();
     const { container } = renderAt();

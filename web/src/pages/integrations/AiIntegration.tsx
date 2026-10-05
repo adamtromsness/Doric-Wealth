@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../../api';
 import { Field } from '../../components/ui';
 
@@ -54,6 +55,9 @@ export default function AiIntegration() {
       {err && <div className="error" style={{ marginBottom: 16 }}>{err}</div>}
 
       <div className="card" style={{ marginBottom: 24 }}>
+        <div className="banner" style={{ marginBottom: 12, fontSize: 13 }}>
+          When you use an AI feature, the data it needs (figures, transactions, or a receipt image) is sent to Anthropic to produce the answer. Don't use AI features with anything you'd rather not share. See <Link to="/privacy">Privacy</Link>.
+        </div>
         <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>
           Get a key at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noreferrer">console.anthropic.com</a>.
           It's tied to your account, never shown again, and only used when you trigger an analysis.

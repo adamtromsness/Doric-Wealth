@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { one, query, withTransaction } from '../db.js';
+import { one, query, withTransaction, pool } from '../db.js';
 import { ah, require_, HttpError } from '../http.js';
 import {
   hashPassword, verifyPassword, createSession, destroySession, destroyOtherSessions,
@@ -7,6 +7,8 @@ import {
 } from '../auth.js';
 import { inviteUsable } from './invites.js';
 import { encodeAiKey, decodeAiKey } from '../ai/aiKeys.js';
+import { mailConfigured, sendMail } from '../mailer.js';
+import { createResetToken, checkResetToken, completeReset, resetUrl, EMAIL_LINK_MINUTES } from '../passwordReset.js';
 import { requireAuth, mePayload } from '../tenant.js';
 import { rateLimit } from '../rateLimit.js';
 import { config } from '../config.js';
@@ -52,7 +54,7 @@ auth.get(
   '/signup-config',
   ah(async (_req, res) => {
     const anyUser = await one(`SELECT 1 FROM users LIMIT 1`);
-    res.json({ invite_only: config.signupMode === 'invite', first_account: !anyUser });
+    res.json({ invite_only: config.signupMode === 'invite', first_account: !anyUser, contact_email: config.contactEmail || null });
   })
 );
 
@@ -197,6 +199,66 @@ auth.put(
       [req.user!.id, hash, salt]);
     const ended = await destroyOtherSessions(req.user!.id, req.sessionToken);
     res.json({ ended });
+  })
+);
+
+// --- Password reset ("Forgot password?") ---
+// Rate-limited like login: these endpoints take secrets or trigger email.
+const resetLimiter = rateLimit({ windowMs: 15 * 60_000, max: 10, keyPrefix: 'pwreset:', message: 'Too many password reset attempts. Please wait a few minutes and try again.' });
+
+// Ask for a reset link. With email configured, a link is emailed if the account
+// exists; the response is the same either way, so this can't reveal who has an
+// account. Without email, the user is told to ask the operator for a link.
+auth.post(
+  '/password-reset/request',
+  resetLimiter,
+  ah(async (req, res) => {
+    const email = String(req.body?.email ?? '').trim();
+    if (!EMAIL_RE.test(email)) throw new HttpError(400, 'Enter a valid email address.');
+    const emailEnabled = mailConfigured() && Boolean(config.appBaseUrl);
+    if (emailEnabled) {
+      const user = await one<{ id: number; email: string }>(`SELECT id, email FROM users WHERE lower(email) = lower($1)`, [email]);
+      if (user) {
+        try {
+          const token = await createResetToken(pool, user.id, 'email', EMAIL_LINK_MINUTES);
+          await sendMail({
+            to: user.email,
+            subject: 'Reset your Doric password',
+            text: `Someone (hopefully you) asked to reset the password for your Doric account.\n\n`
+              + `Open this link within ${EMAIL_LINK_MINUTES} minutes to choose a new password:\n${resetUrl(token)}\n\n`
+              + `If you didn't ask for this, you can ignore this email. Your password won't change.`,
+          });
+        } catch (e) {
+          // Don't reveal delivery problems (or the account's existence) to the caller.
+          console.error('password reset email failed:', e);
+        }
+      }
+    }
+    res.json({ ok: true, email_enabled: emailEnabled });
+  })
+);
+
+// Check a link before showing the new-password form.
+auth.get(
+  '/password-reset/:token',
+  resetLimiter,
+  ah(async (req, res) => {
+    const found = await checkResetToken(pool, String(req.params.token));
+    if (!found) throw new HttpError(404, 'This reset link is invalid, expired, or already used. Ask for a new one.');
+    res.json(found);
+  })
+);
+
+// Set a new password with a link. Signs the user out everywhere; they then sign in.
+auth.post(
+  '/password-reset/complete',
+  resetLimiter,
+  ah(async (req, res) => {
+    require_(req.body, ['token', 'password']);
+    const password = String(req.body.password);
+    if (password.length < MIN_PASSWORD_LENGTH) throw new HttpError(400, `Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    await completeReset(String(req.body.token), hashPassword(password));
+    res.json({ ok: true });
   })
 );
 

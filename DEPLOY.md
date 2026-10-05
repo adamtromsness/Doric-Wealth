@@ -46,6 +46,7 @@ Set on the ECS task definition. The image already defaults `NODE_ENV=production`
 | `APP_DATABASE_URL` | from Secrets Manager | non-superuser role the server runs as (enables RLS — see 4b) |
 | `DB_POOL_MAX` | `20` | max pooled connections (one per in-flight request) |
 | `APP_BASE_URL` | `https://app.example.com` | builds absolute invite links |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | optional | outgoing email for password reset links (any SMTP relay: OCI Email Delivery, Amazon SES, …). Without them, "Forgot password?" tells the user to ask the operator, who runs `node dist/passwordReset.js person@example.com` to get a 24-hour, one-time link. Needs `APP_BASE_URL` for the links. |
 | `SIGNUP_MODE` | `invite` (default in prod) | `invite`: sign-up needs a signup invite or a book invite code (the first account on an empty database is exempt). `open`: anyone can sign up. Unknown values fail closed to `invite`. |
 | `COOKIE_SECURE` | `true` (default in prod) | session cookie sent over HTTPS only |
 | `TRUST_PROXY` | `true` (default in prod) | trust the ALB's `X-Forwarded-Proto` |
@@ -137,3 +138,13 @@ curl -fsS https://app.example.com/api/ready          # {"ok":true}
 
 Re-build & push (`:latest` or an immutable tag), update the service, and run the
 migration task again. Sessions survive deploys (stored in the DB).
+
+## Off-machine backup copies (self-hosted stack)
+
+`docker-compose.prod.yml` has an optional `offsite` service (rclone) that copies each
+backup dump to an S3-compatible bucket every hour and deletes copies older than
+`BACKUP_KEEP_DAYS`. `scripts/local-prod/deploy.sh` starts it when `OFFSITE_BUCKET` is set
+in `.env.production` (see `.env.production.example`). For OCI Object Storage, use its
+S3-compatible endpoint (`https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`)
+with a "Customer Secret Key" as the access key pair. Restore drill: download a dump from
+the bucket and `pg_restore` it into a scratch database, as `deploy.sh` rehearsals do.

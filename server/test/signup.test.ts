@@ -50,7 +50,7 @@ const register = (body: Record<string, unknown>) =>
 test('signup-config reports the mode', async () => {
   await registerUser(base); // the database may be empty when this runs first
   const c = makeClient(base);
-  assert.deepEqual((await c.get('/api/auth/signup-config')).body, { invite_only: false, first_account: false });
+  assert.deepEqual((await c.get('/api/auth/signup-config')).body, { invite_only: false, first_account: false, contact_email: null });
   await inviteOnly(async () => {
     assert.equal((await c.get('/api/auth/signup-config')).body.invite_only, true);
   });
@@ -159,7 +159,7 @@ test('invite-only: the first account on an empty database needs no code; the sec
       await new Promise((r) => setTimeout(r, 200));
     }
     const c = makeClient(childBase);
-    assert.deepEqual((await c.get('/api/auth/signup-config')).body, { invite_only: true, first_account: true });
+    assert.deepEqual((await c.get('/api/auth/signup-config')).body, { invite_only: true, first_account: true, contact_email: null });
     const first = await c.post('/api/auth/register', { email: uniqueEmail('first'), password: 'supersecret' });
     assert.equal(first.status, 201);
     assert.equal((await c.get('/api/auth/signup-config')).body.first_account, false);

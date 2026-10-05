@@ -26,6 +26,13 @@ describe('AiIntegration', () => {
     expect(api.get).toHaveBeenCalledWith('/auth/ai-settings');
   });
 
+  it('tells you AI features send data to Anthropic, with a link to Privacy', async () => {
+    (api.get as any).mockResolvedValue(settings());
+    renderPage();
+    expect(await screen.findByText(/is sent to Anthropic to produce the answer/)).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy');
+  });
+
   it('shows the user-key hint when a personal key is set and offers Delete', async () => {
     (api.get as any).mockResolvedValue(settings({ user_key_set: true, key_hint: '…abcd' }));
     renderPage();

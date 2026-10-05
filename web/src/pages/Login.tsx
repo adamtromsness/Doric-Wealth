@@ -36,14 +36,16 @@ export default function Login() {
       <form onSubmit={submit}>
         <Field label="Email"><input type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
         <Field label="Password"><input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-        <div className="btn-row" style={{ marginTop: 14 }}>
+        <div className="btn-row" style={{ marginTop: 14, justifyContent: 'space-between', alignItems: 'center' }}>
           <button type="submit" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</button>
+          <Link to="/forgot-password" style={{ fontSize: 13 }}>Forgot password?</Link>
         </div>
       </form>
       <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
         {inviteOnly && !code ? 'Have an invite? ' : 'No account? '}
         <Link to={code ? `/register?code=${encodeURIComponent(code)}` : '/register'}>{inviteOnly && !code ? 'Create your account' : 'Create one'}</Link>
       </p>
+      <p className="muted" style={{ fontSize: 12, marginTop: 8 }}><Link to="/privacy">Privacy</Link></p>
     </AuthShell>
   );
 }
