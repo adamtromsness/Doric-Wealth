@@ -273,3 +273,49 @@ test('AI endpoints validate input before invoking the model', async () => {
   const enrich = await client.post('/api/transactions/enrich-items', { items: [{ name: 'Milk 32 oz' }] });
   assert.ok([200, 500, 502, 503].includes(enrich.status), `enrich status ${enrich.status}`);
 });
+
+test('GET /transactions sorts by transaction date (default) or posted date, either direction', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const mk = (merchant: string, txn_date: string, posted_date: string | null) =>
+    client.post('/api/transactions', { amount: 1, account_id: acct, direction: 'expense', merchant, txn_date, posted_date });
+  await mk('A', '2026-09-01', '2026-09-10'); // oldest purchase, latest posting
+  await mk('B', '2026-09-05', '2026-09-06');
+  await mk('C', '2026-09-03', '2026-09-04');
+  await mk('P1', '2026-09-02', null);
+  await mk('P2', '2026-09-04', null);
+  const order = async (qs = '') => {
+    const r = (await client.get(`/api/transactions?limit=50${qs}`)).body;
+    return { posted: r.posted.map((t: any) => t.merchant).join(''), pending: r.pending.map((t: any) => t.merchant).join(',') };
+  };
+  assert.deepEqual(await order(), { posted: 'BCA', pending: 'P2,P1' }, 'default: transaction date, newest first');
+  assert.deepEqual(await order('&sort=txn_date&dir=asc'), { posted: 'ACB', pending: 'P1,P2' });
+  assert.deepEqual(await order('&sort=posted_date'), { posted: 'ABC', pending: 'P2,P1' }, 'pending stays by transaction date');
+  assert.deepEqual(await order('&sort=posted_date&dir=asc'), { posted: 'CBA', pending: 'P1,P2' });
+  // Anything else falls back to the default (no SQL from the query string).
+  assert.deepEqual(await order('&sort=amount;drop&dir=sideways'), { posted: 'BCA', pending: 'P2,P1' });
+});
+
+test('POST /:id/post without a date uses the transaction\'s own date, never today', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const t = (await client.post('/api/transactions', { amount: 5, account_id: acct, direction: 'expense', txn_date: '2026-09-02', posted_date: null })).body;
+  const r = await client.post(`/api/transactions/${t.id}/post`, {});
+  assert.equal(r.status, 200);
+  assert.equal(String(r.body.posted_date).slice(0, 10), '2026-09-02');
+  // An explicit date still wins; posted:false still un-posts.
+  assert.equal(String((await client.post(`/api/transactions/${t.id}/post`, { posted_date: '2026-09-04' })).body.posted_date).slice(0, 10), '2026-09-04');
+  assert.equal((await client.post(`/api/transactions/${t.id}/post`, { posted: false })).body.posted_date, null);
+});
+
+test('Direct Deposit is a transaction channel, and can be filtered on', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const pay = await client.post('/api/transactions', { amount: 2500, account_id: acct, direction: 'income', txn_date: '2026-09-15', merchant: 'Employer', channel: 'direct_deposit' });
+  assert.equal(pay.status, 201);
+  assert.equal(pay.body.channel, 'direct_deposit');
+  await client.post('/api/transactions', { amount: 9, account_id: acct, direction: 'expense', txn_date: '2026-09-15', merchant: 'Cafe', channel: 'in_store' });
+  const dd = (await client.get('/api/transactions?channel=direct_deposit')).body;
+  assert.deepEqual([...dd.posted, ...dd.pending].map((t: any) => t.merchant), ['Employer']);
+  assert.equal((await client.post('/api/transactions', { amount: 1, account_id: acct, direction: 'expense', txn_date: '2026-09-15', channel: 'carrier_pigeon' })).status, 400);
+});

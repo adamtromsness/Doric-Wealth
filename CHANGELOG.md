@@ -14,6 +14,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Fixed
+- **Mark Posted** now asks for the posted date, pre-filled with the purchase date (moved to Monday for weekend purchases). Before, it stamped today's date, which was wrong when catching up on transactions that cleared earlier (#9).
+
+### Changed
+- **Subscription quick-fill prices** are updated to current US prices (checked October 2026), including Spotify Family at $21.99. Renamed plans and services use their new names (e.g. HBO Max, Paramount+ Premium, Xbox Game Pass Essential/Premium, Adobe Creative Cloud Pro), and the picker notes when prices were last checked. Existing subscriptions aren't changed (#11).
+- **Direct Deposit** is now a transaction channel, alongside In-store, Online, Phone, Mail and Check, and can be used in the Transactions filter (#10).
+- **Transactions** shows both the **Transaction Date** and the **Posted Date** (posted list), sorted by transaction date, newest first. Click either date heading to sort by it; click again to reverse. Amounts no longer wrap onto two lines (#8).
+
 ## [1.6.1] - 2026-10-05
 
 ### Fixed

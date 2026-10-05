@@ -4,7 +4,7 @@ import { api, money, shortDate, todayStr, normalizeUrl, isOpenableUrl, formatPho
 import { cap, BackLink, Field, AmountInput, EditorSection, Loading } from '../components/ui';
 import { EntityDocuments } from '../components/EntityDocuments';
 import {
-  serviceTypeLabel, dueClass, dueInLabel, CYCLES, SERVICE_TYPES, SERVICE_PRESETS, PRESET_TYPE,
+  serviceTypeLabel, dueClass, dueInLabel, CYCLES, SERVICE_TYPES, SERVICE_PRESETS, PRESET_TYPE, PRESET_PRICES_NOTE,
   type Subscription, type Charge, type Account, type PresetTier,
 } from './Subscriptions';
 import { isPayableFrom } from './utilities/invoiceHelpers';
@@ -524,7 +524,7 @@ function SubscriptionInfoForm({ sub, isNew = false, accounts, onSaved, onDeleted
               </select>
             </Field>
           </div>
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Fills name, tier, price &amp; cycle below — prices are approximate; edit as needed.</div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Fills name, tier, price &amp; cycle below. {PRESET_PRICES_NOTE}</div>
         </div>
       )}
 
@@ -532,7 +532,7 @@ function SubscriptionInfoForm({ sub, isNew = false, accounts, onSaved, onDeleted
         <Section title="Plan & Pricing" headStyle={{ marginTop: 6, marginBottom: 6 }}>
           <div className="grid grid-3">
             <Field label="Name"><input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="e.g. Netflix" /></Field>
-            <Field label="Tier / Plan"><input value={f.tier} onChange={(e) => setF({ ...f, tier: e.target.value })} placeholder="e.g. Premium 4K, Family" /></Field>
+            <Field label="Tier / Plan"><input value={f.tier} onChange={(e) => setF({ ...f, tier: e.target.value })} placeholder="e.g. Premium, Family" /></Field>
             <Field label="Type">
               <select value={f.service_type} onChange={(e) => setF({ ...f, service_type: e.target.value })}>
                 <option value="">—</option>

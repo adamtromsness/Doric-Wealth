@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Transactions from './Transactions';
@@ -199,6 +199,29 @@ describe('Transactions page', () => {
     expect(screen.getByText('1 total')).toBeInTheDocument();
   });
 
+  it('shows transaction and posted dates, sorted by transaction date by default; headers change the sort', async () => {
+    const user = userEvent.setup();
+    setup({
+      posted: [txn({ txn_date: '2026-09-01', posted_date: '2026-09-03' })], total: 1,
+      pending: [txn({ id: 2, merchant: 'Pending Shop', txn_date: '2026-09-04', posted_date: null })], pendingTotal: 1,
+    });
+    renderPage();
+    await screen.findByText('Pending Shop');
+    expect(lastTxnUrl()).toContain('sort=txn_date&dir=desc');
+    // Posted list has both dates; pending (not posted yet) has the transaction date only.
+    expect(screen.getAllByRole('columnheader', { name: /Transaction Date/ })).toHaveLength(2);
+    expect(screen.getAllByRole('columnheader', { name: /Posted Date/ })).toHaveLength(1);
+    expect(screen.getByText('Sep 1, 2026')).toBeInTheDocument();
+    expect(screen.getByText('Sep 3, 2026')).toBeInTheDocument();
+    expect(screen.getAllByRole('columnheader', { name: /Transaction Date ▼/ })[0]).toHaveAttribute('aria-sort', 'descending');
+
+    await user.click(screen.getByRole('button', { name: /Posted Date/ }));
+    await waitFor(() => expect(lastTxnUrl()).toContain('sort=posted_date&dir=desc'));
+    await user.click(screen.getByRole('button', { name: /Posted Date/ }));
+    await waitFor(() => expect(lastTxnUrl()).toContain('sort=posted_date&dir=asc'));
+    expect(screen.getByRole('columnheader', { name: /Posted Date ▲/ })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
   it('renders income with a positive amount and a dash for missing fields', async () => {
     setup({ posted: [txn({ id: 2, direction: 'income', amount: 1000, category_name: 'Salary', merchant: null, description: null, purchaser: null, channel: null })], total: 1 });
     renderPage();
@@ -260,15 +283,34 @@ describe('Transactions page', () => {
     expect(await screen.findByText(/principal \$400\.00 · costs \$100\.00/)).toBeInTheDocument();
   });
 
-  it('shows the pending section and marks a row posted', async () => {
-    setup({ pending: [txn({ id: 7, posted_date: null, merchant: 'Pending Co' })], pendingTotal: 1 });
+  it('shows the pending section; Mark Posted asks for the date, pre-filled with the purchase date', async () => {
+    setup({ pending: [txn({ id: 7, posted_date: null, merchant: 'Pending Co', txn_date: '2026-08-04' })], pendingTotal: 1 });
     renderPage();
     expect(await screen.findByText('Pending Co')).toBeInTheDocument();
     expect(screen.getByText('1 awaiting posting')).toBeInTheDocument();
     // Posted list reports the pending-aware empty copy.
     expect(screen.getByText('No posted transactions match.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Mark Posted' }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/transactions/7/post'));
+    const dialog = document.querySelector('.modal') as HTMLElement;
+    expect(within(dialog).getByText('Mark as Posted')).toBeInTheDocument();
+    const date = dialog.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(date.value).toBe('2026-08-04'); // the purchase date, not today
+    expect(api.post).not.toHaveBeenCalledWith('/transactions/7/post', expect.anything());
+    fireEvent.change(date, { target: { value: '2026-08-06' } });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Mark Posted' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/transactions/7/post', { posted_date: '2026-08-06' }));
+    await waitFor(() => expect(document.querySelector('.modal')).toBeNull());
+  });
+
+  it('Mark Posted moves a weekend purchase date to Monday, and can be cancelled', async () => {
+    setup({ pending: [txn({ id: 8, posted_date: null, txn_date: '2026-10-03' })], pendingTotal: 1 }); // a Saturday
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark Posted' }));
+    const dialog = document.querySelector('.modal') as HTMLElement;
+    expect((dialog.querySelector('input[type="date"]') as HTMLInputElement).value).toBe('2026-10-05');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(document.querySelector('.modal')).toBeNull();
+    expect(api.post).not.toHaveBeenCalledWith('/transactions/8/post', expect.anything());
   });
 
   it('surfaces a mark-posted failure', async () => {
@@ -276,6 +318,7 @@ describe('Transactions page', () => {
     (api.post as any).mockRejectedValue(new Error('post boom'));
     renderPage();
     await userEvent.click(await screen.findByRole('button', { name: 'Mark Posted' }));
+    await userEvent.click(within(document.querySelector('.modal') as HTMLElement).getByRole('button', { name: 'Mark Posted' }));
     expect(await screen.findByText('post boom')).toBeInTheDocument();
   });
 

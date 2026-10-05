@@ -14,9 +14,9 @@ export type TagKind = 'vehicle' | 'property' | 'subscription' | 'tag';
 export interface Tag { kind: TagKind; ref_id: number; name: string | null }
 export const TAG_GLYPH: Record<TagKind, string> = { vehicle: '🚗', property: '🏠', subscription: '↻', tag: '🏷️' };
 export const tagKey = (t: { kind: TagKind; ref_id: number }) => `${t.kind}:${t.ref_id}`;
-export type Channel = 'in_store' | 'online' | 'phone' | 'mail' | 'check';
+export type Channel = 'in_store' | 'online' | 'phone' | 'mail' | 'check' | 'direct_deposit';
 export const CHANNEL_LABEL: Record<Channel, string> = {
-  in_store: 'In-store', online: 'Online', phone: 'Phone', mail: 'Mail', check: 'Check',
+  in_store: 'In-store', online: 'Online', phone: 'Phone', mail: 'Mail', check: 'Check', direct_deposit: 'Direct Deposit',
 };
 // Normalize a raw bank descriptor to a stable recurring-charge key. Mirror of
 // recurringKey in server/src/routes/subscriptions.ts — keep the two in sync.

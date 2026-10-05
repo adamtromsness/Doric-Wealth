@@ -47,3 +47,10 @@ describe('TxnEditor focus', () => {
     expect(amountInput()).not.toHaveFocus();
   });
 });
+
+describe('TxnEditor channel', () => {
+  it('offers Direct Deposit as a channel', () => {
+    renderEditor();
+    expect(screen.getByRole('option', { name: 'Direct Deposit' })).toHaveValue('direct_deposit');
+  });
+});

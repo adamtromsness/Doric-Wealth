@@ -5,12 +5,12 @@ import { type Filters, DEFAULT_FILTERS, chip, buildTxnParams, TxnFilterBar } fro
 import { ImportModal } from '../components/ImportModal';
 import { ImportSimpleFinModal } from '../components/ImportSimpleFinModal';
 import { SubscriptionSuggestionDetail, justification, type SubscriptionSuggestion } from '../components/SubscriptionSuggestions';
-import { cap } from '../components/ui';
+import { cap, Modal, Field, EditorFooter } from '../components/ui';
 import type { Category, StagedTxn } from '../types';
 import {
   type Txn, type Tag, type Account, type Vehicle, type Property, type Subscription, type UserTag,
   type TxnPage,
-  CHANNEL_LABEL, recurringKey, stagedSkipReason, tagKey,
+  CHANNEL_LABEL, recurringKey, stagedSkipReason, tagKey, businessDay,
   FILTER_KEY, loadStored, deepLinkFilters, PAGE_SIZE,
 } from './transactions/helpers';
 import { Pager } from './transactions/common';
@@ -87,6 +87,8 @@ export default function Transactions() {
   const [convertPair, setConvertPair] = useState<PostedTransferPair | null>(null);
   const [pendingPage, setPendingPage] = useState(0);
   const [postedPage, setPostedPage] = useState(0);
+  // Sort by transaction date (the default) or posted date; newest first by default.
+  const [sort, setSort] = useState<{ col: 'txn_date' | 'posted_date'; dir: 'asc' | 'desc' }>({ col: 'txn_date', dir: 'desc' });
   const [staged, setStaged] = useState<StagedTxn[]>([]);
   const [transferPairs, setTransferPairs] = useState<TransferPair[]>([]);
   const [transferRules, setTransferRules] = useState<TransferRule[]>([]);
@@ -119,15 +121,16 @@ export default function Transactions() {
 
   const load = () => {
     const url = `/transactions${qs}${qs ? '&' : '?'}limit=${PAGE_SIZE}`
-      + `&pendingOffset=${pendingPage * PAGE_SIZE}&postedOffset=${postedPage * PAGE_SIZE}`;
+      + `&pendingOffset=${pendingPage * PAGE_SIZE}&postedOffset=${postedPage * PAGE_SIZE}`
+      + `&sort=${sort.col}&dir=${sort.dir}`;
     api.get<TxnPage>(url)
       .then((d) => { setPending(d.pending); setPendingTotal(d.pendingTotal); setPosted(d.posted); setTotal(d.total); })
       .catch((e) => setErr(e.message));
   };
-  // Reload when the filter or either page changes.
-  useEffect(() => { load(); }, [qs, pendingPage, postedPage]);
-  // Jump both lists back to the first page whenever the filter changes.
-  useEffect(() => { setPendingPage(0); setPostedPage(0); }, [qs]);
+  // Reload when the filter, the sort, or either page changes.
+  useEffect(() => { load(); }, [qs, pendingPage, postedPage, sort]);
+  // Jump both lists back to the first page whenever the filter or sort changes.
+  useEffect(() => { setPendingPage(0); setPostedPage(0); }, [qs, sort]);
   // If a total shrank below the current page (e.g. after a delete), clamp it.
   useEffect(() => {
     const pc = Math.max(1, Math.ceil(pendingTotal / PAGE_SIZE));
@@ -178,8 +181,18 @@ export default function Transactions() {
     [pending, posted]
   );
 
-  const markPosted = async (t: Txn) => {
-    try { await api.post(`/transactions/${t.id}/post`); load(); } catch (e: any) { setErr(e.message); }
+  // Mark Posted asks for the date it posted, pre-filled with the purchase date (moved
+  // off a weekend), rather than stamping today: when catching up, today is usually
+  // wrong, and the posted date decides which balance snapshot a transaction falls in.
+  const [posting, setPosting] = useState<{ txn: Txn; date: string } | null>(null);
+  const [postingBusy, setPostingBusy] = useState(false);
+  const markPosted = (t: Txn) => setPosting({ txn: t, date: businessDay(t.txn_date.slice(0, 10)) });
+  const confirmPosted = async () => {
+    if (!posting) return;
+    setPostingBusy(true);
+    try { await api.post(`/transactions/${posting.txn.id}/post`, { posted_date: posting.date }); setPosting(null); load(); }
+    catch (e: any) { setErr(e.message); }
+    finally { setPostingBusy(false); }
   };
 
   // --- Import review actions ---
@@ -252,9 +265,24 @@ export default function Transactions() {
       ? <>{tags.map((tag) => <span key={tagKey(tag)} className="tag" style={{ marginRight: 6 }}>{tag.name}</span>)}</>
       : '—';
 
-  const renderRow = (t: Txn) => (
+  // A date column header that sorts by that date: click to sort by it (newest first),
+  // click again to flip the direction.
+  const sortHeader = (col: 'txn_date' | 'posted_date', label: string) => {
+    const active = sort.col === col;
+    return (
+      <th aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+        <button type="button" className="th-sort" title={`Sort by ${label.toLowerCase()}`}
+          onClick={() => setSort((cur) => (cur.col === col ? { col, dir: cur.dir === 'desc' ? 'asc' : 'desc' } : { col, dir: 'desc' }))}>
+          {label}{active ? (sort.dir === 'desc' ? ' ▼' : ' ▲') : ''}
+        </button>
+      </th>
+    );
+  };
+
+  const renderRow = (t: Txn, withPostedDate = false) => (
     <tr key={t.id} className="clickable txn-row" onClick={() => setEditing(t)}>
       <td className="num" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{shortDate(t.txn_date)}</td>
+      {withPostedDate && <td className="num" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{shortDate(t.posted_date)}</td>}
       <td>
         {t.merchant || <span className="muted">—</span>}
         {t.direction === 'expense' && t.merchant && candidateKeys.has(recurringKey(t.merchant)) && (
@@ -290,7 +318,7 @@ export default function Transactions() {
         })()}
       </td>
       <td className="muted" style={{ fontSize: 12 }}>{t.direction === 'transfer' ? '—' : tagChips(allTags(t))}</td>
-      <td className={`r money ${t.direction === 'income' ? 'credit' : t.direction === 'transfer' ? 'muted' : 'debit'}`}>
+      <td className={`r money ${t.direction === 'income' ? 'credit' : t.direction === 'transfer' ? 'muted' : 'debit'}`} style={{ whiteSpace: 'nowrap' }}>
         {t.direction === 'transfer'
           ? money(t.amount)
           : money(t.direction === 'income' ? t.amount : -t.amount, { sign: t.direction === 'income' })}
@@ -564,8 +592,8 @@ export default function Transactions() {
           <Pager top page={pendingSafePage} pageCount={pendingPageCount} total={pendingTotal} start={pendingStart} count={pending.length} onPage={setPendingPage} />
           <div className="card" style={{ padding: 0 }}>
             <table className="ledger">
-              <thead><tr><th>Date</th><th>Merchant</th><th>Account</th><th>Person</th><th>Category</th><th>Tags</th><th className="r">Amount</th><th>Receipt</th><th className="r">Auto</th><th></th></tr></thead>
-              <tbody>{pending.map(renderRow)}</tbody>
+              <thead><tr>{sortHeader('txn_date', 'Transaction Date')}<th>Merchant</th><th>Account</th><th>Person</th><th>Category</th><th>Tags</th><th className="r">Amount</th><th>Receipt</th><th className="r">Auto</th><th></th></tr></thead>
+              <tbody>{pending.map((t) => renderRow(t))}</tbody>
             </table>
           </div>
           <Pager page={pendingSafePage} pageCount={pendingPageCount} total={pendingTotal} start={pendingStart} count={pending.length} onPage={setPendingPage} />
@@ -580,15 +608,26 @@ export default function Transactions() {
       <div className="card" style={{ padding: 0 }}>
         <table className="ledger">
           <thead>
-            <tr><th>Date</th><th>Merchant</th><th>Account</th><th>Person</th><th>Category</th><th>Tags</th><th className="r">Amount</th><th>Receipt</th><th className="r">Auto</th><th></th></tr>
+            <tr>{sortHeader('txn_date', 'Transaction Date')}{sortHeader('posted_date', 'Posted Date')}<th>Merchant</th><th>Account</th><th>Person</th><th>Category</th><th>Tags</th><th className="r">Amount</th><th>Receipt</th><th className="r">Auto</th><th></th></tr>
           </thead>
           <tbody>
-            {posted.map(renderRow)}
-            {posted.length === 0 && <tr><td colSpan={10}><div className="empty">{pendingTotal ? 'No posted transactions match.' : 'No transactions match. Add one or clear filters.'}</div></td></tr>}
+            {posted.map((t) => renderRow(t, true))}
+            {posted.length === 0 && <tr><td colSpan={11}><div className="empty">{pendingTotal ? 'No posted transactions match.' : 'No transactions match. Add one or clear filters.'}</div></td></tr>}
           </tbody>
         </table>
       </div>
       <Pager page={postedSafePage} pageCount={postedPageCount} total={total} start={postedStart} count={posted.length} onPage={setPostedPage} />
+
+      {posting && (
+        <Modal title="Mark as Posted" subtitle={`${posting.txn.merchant || 'Transaction'} · ${money(Number(posting.txn.amount))} · made ${shortDate(posting.txn.txn_date)}`} onClose={() => setPosting(null)}>
+          <Field label="Posted Date">
+            <input type="date" value={posting.date} min={posting.txn.txn_date.slice(0, 10)}
+              onChange={(e) => setPosting({ ...posting, date: e.target.value })} />
+          </Field>
+          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>The day it cleared your account, from your statement or bank app. It decides which balance snapshot the transaction counts toward.</p>
+          <EditorFooter onClose={() => setPosting(null)} onSave={confirmPosted} saveLabel="Mark Posted" saving={postingBusy} disabled={!posting.date} />
+        </Modal>
+      )}
 
       {(adding || editing) && (
         <TxnEditor
