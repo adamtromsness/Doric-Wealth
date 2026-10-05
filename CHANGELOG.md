@@ -14,17 +14,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Fixed
+- Nightly backups are taken reliably. They're now checked every 15 minutes and taken whenever the last one is more than a day old, so a computer that sleeps or restarts no longer skips nights. Before, backups could stop until the next restart.
+- The release notes now list the Dependants and money-field changes under v1.6.0, where they shipped.
+
 ## [1.6.0] - 2026-10-02
 
 ### Added
 - **Integrations → RentCast:** add a RentCast API key for your books to estimate property values from comparable sales. The key is stored encrypted and shared by everyone in the books; only owners and admins can change it.
 - **Automatic property values:** on a property's Value tab, turn on **Update Value Automatically** to record a RentCast estimate each month (or week). The tab shows when it last updated, or why it couldn't.
 
-## [1.5.0] - 2026-10-02
-
 ### Changed
 - **Money fields** now show dollars the way you'd write them (`$127,000.00`) whenever you're not typing in them, across the app. On **My Profile**, Annual Income, Desired Monthly Income and Monthly Contribution are now money fields too (#7).
 - **My Profile → Dependants** shows each dependant's age, and a date of birth can't be in the future or more than 120 years ago (#6).
+
+## [1.5.0] - 2026-10-02
+
+### Changed
 - **Add Transaction** now puts the cursor in the Amount field, so you can start typing the amount right away (#5).
 - Doric supports **US dollars only**. Accounts in other currencies are refused instead of being added up as if they were dollars, and foreign-currency bank accounts linked through SimpleFIN aren't synced (the link shows why).
 - Reconciliations (not shown in the app yet) can only be completed when the cleared balance matches the statement. A completed reconciliation and the transactions in it are locked until it's reopened, and every completion and reopening is recorded.
