@@ -124,9 +124,9 @@ async function tableMeta(tables: string[]): Promise<Record<string, TableMeta>> {
 }
 
 // Topological order (parents before children) from FK edges among `tables`.
-async function topoOrder(tables: string[]): Promise<string[]> {
+async function topoOrder(tables: string[], extra: { child: string; parent: string }[] = []): Promise<string[]> {
   const set = new Set(tables);
-  const edges = await fkEdges();
+  const edges = [...await fkEdges(), ...extra];
   const deps: Record<string, Set<string>> = {};
   for (const t of tables) deps[t] = new Set();
   for (const e of edges) if (set.has(e.child) && set.has(e.parent) && e.child !== e.parent) deps[e.child].add(e.parent);
@@ -161,6 +161,25 @@ async function fkColumns(tables: string[]): Promise<Record<string, { column: str
   }
   return out;
 }
+
+// References to another row's id that aren't declared foreign keys (one column can
+// point at different tables depending on a "kind" column), so fkColumns can't see
+// them. Restore remaps them like foreign keys. `deferred`: filled in after every
+// table has loaded, because the parent also points back (subscriptions and utility
+// accounts reference their managed category).
+type PolyRef = { table: string; column: string; kindCol?: string; parents: string | Record<string, string>; deferred?: boolean };
+const POLY_REFS: PolyRef[] = [
+  { table: 'line_tags', column: 'ref_id', kindCol: 'kind', parents: { vehicle: 'vehicles', property: 'properties', tag: 'tags', subscription: 'subscriptions' } },
+  { table: 'insurance_policies', column: 'entity_id', kindCol: 'entity_kind', parents: { vehicle: 'vehicles', property: 'properties', asset: 'assets' } },
+  { table: 'ai_analyses', column: 'subject_id', kindCol: 'kind', parents: { vehicle_tco: 'vehicles', property_cost: 'properties' } },
+  { table: 'asset_maintenance', column: 'transaction_id', parents: 'transactions' },
+  { table: 'budget_period_lines', column: 'group_id', parents: 'categories' },
+  { table: 'categories', column: 'source_id', kindCol: 'source_kind', parents: { utility: 'utility_accounts', subscription: 'subscriptions' }, deferred: true },
+];
+const polyParents = (p: PolyRef): string[] => (typeof p.parents === 'string' ? [p.parents] : Object.values(p.parents));
+// The table a row's reference points at, or null for an unknown kind.
+const polyParent = (p: PolyRef, row: any): string | null =>
+  typeof p.parents === 'string' ? p.parents : (p.parents[String(row[p.kindCol!])] ?? null);
 
 // --- Data sets and their current row counts (for the picker UI) ---------------
 backup.get('/groups', ah(async (req, res) => {
@@ -296,14 +315,16 @@ function validateEnvelope(env: any): void {
   }
 }
 
-// Validate a snapshot envelope and summarize what it contains (no writes).
-function previewEnvelope(env: any) {
+// Validate a snapshot envelope and summarize what it contains and what restoring it
+// would replace (no writes).
+async function previewEnvelope(bookId: number, env: any) {
   validateEnvelope(env);
   const counts: Record<string, number> = {};
   let total = 0;
   for (const [t, rows] of Object.entries(env.tables as Record<string, any[]>)) {
     if (Array.isArray(rows) && rows.length) { counts[t] = rows.length; total += rows.length; }
   }
+  const plan = await planRestore(bookId, env);
   return {
     book: env.book ?? null,
     exported_at: env.exported_at ?? null,
@@ -311,59 +332,143 @@ function previewEnvelope(env: any) {
     schema_mismatch: env.schema_version !== SCHEMA_VERSION,
     total_rows: total,
     counts,
+    // What a restore would do: the data sets it replaces, how many current records
+    // those hold (all removed), and anything that stops it.
+    replaces: plan.groups.map(groupLabel),
+    current_rows: plan.currentRows,
+    problems: plan.problems,
   };
 }
 
 // --- Preview: validate a snapshot and report what it contains (no writes) -----
 backup.post('/preview', ah(async (req, res) => {
-  res.json(previewEnvelope(req.body));
+  res.json(await previewEnvelope(hh(req), req.body));
 }));
 
+interface RestorePlan {
+  snapTables: string[];   // tables with rows (or an empty list) in the snapshot
+  replace: string[];      // every table a restore wipes: all tables of the data sets the snapshot covers
+  groups: string[];       // those data sets
+  problems: string[];     // reasons the restore can't go ahead (empty = safe)
+  currentRows: number;    // current records in `replace`
+  liveIds: (table: string) => Promise<Set<number>>;
+}
+
+// Work out what restoring `env` into the book replaces, and whether that's safe. A
+// backup covers the data sets it has tables for (a newer table it predates counts as
+// empty), and a restore replaces those data sets whole. A selective backup leaves the
+// other data sets alone, so it can't go ahead if:
+//   - rows outside it point at rows it replaces (e.g. transactions at accounts, or a
+//     bank link at an account): replacing those would unlink or delete them; or
+//   - its rows need a row outside it that this book doesn't have (a required link).
+// Links from restored rows to rows outside it are kept when this book still has that
+// row (a backup of this book), and otherwise dropped.
+async function planRestore(bookId: number, env: any): Promise<RestorePlan> {
+  const allTables = await dataTables();
+  const meta = await tableMeta(allTables);
+  const snapshot: Record<string, any[]> = env.tables;
+  const snapTables = allTables.filter((t) => Array.isArray(snapshot[t]));
+  const covered = new Set(snapTables.map(groupOf));
+  const replace = allTables.filter((t) => covered.has(groupOf(t)));
+  const replaceSet = new Set(replace);
+  const groups = [...GROUPS.map((g) => g.key), 'other'].filter((g) => covered.has(g));
+
+  const cache = new Map<string, Set<number>>();
+  const liveIds = async (t: string) => {
+    let ids = cache.get(t);
+    if (!ids) {
+      ids = new Set((await query<{ id: number }>(`SELECT id FROM "${t}" WHERE book_id = $1`, [bookId])).map((r) => Number(r.id)));
+      cache.set(t, ids);
+    }
+    return ids;
+  };
+
+  const problems: string[] = [];
+  // Rows outside the backup that point into what it replaces, by data set.
+  const outward = new Map<string, number>();
+  // Links between book data tables. (Links to users are kept as they are.)
+  const edges = (await fkEdges()).filter((e) => e.column && e.parent_col === 'id' && e.child !== e.parent && meta[e.child] && meta[e.parent]);
+  for (const e of edges) {
+    if (replaceSet.has(e.child) || !replaceSet.has(e.parent) || !meta[e.child]) continue;
+    const n = (await one<{ c: number }>(`SELECT count(*)::int AS c FROM "${e.child}" WHERE book_id = $1 AND "${e.column}" IS NOT NULL`, [bookId]))!.c;
+    if (n) outward.set(groupOf(e.child), (outward.get(groupOf(e.child)) ?? 0) + n);
+  }
+  for (const p of POLY_REFS) {
+    if (replaceSet.has(p.table) || !meta[p.table]) continue;
+    const targets = typeof p.parents === 'string'
+      ? (replaceSet.has(p.parents) ? [null] : [])
+      : Object.entries(p.parents).filter(([, t]) => replaceSet.has(t)).map(([k]) => k);
+    for (const kind of targets) {
+      const n = kind == null
+        ? (await one<{ c: number }>(`SELECT count(*)::int AS c FROM "${p.table}" WHERE book_id = $1 AND "${p.column}" IS NOT NULL`, [bookId]))!.c
+        : (await one<{ c: number }>(`SELECT count(*)::int AS c FROM "${p.table}" WHERE book_id = $1 AND "${p.column}" IS NOT NULL AND "${p.kindCol}" = $2`, [bookId, kind]))!.c;
+      if (n) outward.set(groupOf(p.table), (outward.get(groupOf(p.table)) ?? 0) + n);
+    }
+  }
+  if (outward.size) {
+    const list = [...outward].map(([g, n]) => `${n.toLocaleString('en-US')} in ${groupLabel(g)}`).join(', ');
+    problems.push(`Restoring only ${groups.map(groupLabel).join(', ')} would unlink or delete records that point at it (${list}). Restore a full backup instead.`);
+  }
+
+  // Required links from the backup's rows to rows outside it that this book lacks.
+  const missing = new Set<string>();
+  for (const t of snapTables) {
+    const rows = snapshot[t];
+    if (!rows.length) continue;
+    for (const e of edges) {
+      if (e.child !== t || replaceSet.has(e.parent) || !meta[t].notNull.has(e.column!)) continue;
+      const ids = await liveIds(e.parent);
+      if (rows.some((r) => r[e.column!] != null && !ids.has(Number(r[e.column!])))) missing.add(groupLabel(groupOf(e.parent)));
+    }
+  }
+  if (missing.size) {
+    problems.push(`This selective restore depends on data sets that aren't in the backup: ${[...missing].join(', ')}. Include those data sets, or restore a full backup.`);
+  }
+
+  let currentRows = 0;
+  for (const t of replace) currentRows += (await one<{ c: number }>(`SELECT count(*)::int AS c FROM "${t}" WHERE book_id = $1`, [bookId]))!.c;
+  return { snapTables, replace, groups, problems, currentRows, liveIds };
+}
+
 // REPLACE the active book's data with the snapshot envelope. Destructive:
-// deletes the book's current data and loads the snapshot in a single transaction
-// (rolls back on any error). Shared by file-upload restore and stored-snapshot restore.
+// deletes the data sets the snapshot covers and loads the snapshot in a single
+// transaction (rolls back on any error). Shared by file-upload restore and
+// stored-snapshot restore. Refuses (before changing anything) when planRestore finds
+// a problem.
 async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_rows: number; tables: number }> {
   validateEnvelope(env);
   const allTables = await dataTables();
   const meta = await tableMeta(allTables);
   const snapshot: Record<string, any[]> = env.tables;
-  // Only the tables actually present in the snapshot are touched — a partial
-  // (selective) backup restores just its own data sets and leaves the rest alone.
-  const snapTables = allTables.filter((t) => Array.isArray(snapshot[t]));
-  const order = (await topoOrder(allTables)).filter((t) => snapTables.includes(t));
+  const polyEdges = POLY_REFS.filter((p) => !p.deferred).flatMap((p) => polyParents(p).map((parent) => ({ child: p.table, parent })));
+  const topo = await topoOrder(allTables, polyEdges);
   const fks = await fkColumns(allTables);
-  // old-id → new-id per restored table, so the snapshot's ids are never trusted:
-  // every primary key is regenerated by the DB and every reference remapped.
-  const idMap: Record<string, Map<number, number>> = {};
-  for (const t of snapTables) idMap[t] = new Map();
-
-  // FK-safety pre-flight (matters for SELECTIVE restores). A cross-table FK whose
-  // parent table isn't part of the snapshot can't be remapped to a fresh id. If the
-  // column is nullable we drop the link on load (below); if it's NOT NULL we can't —
-  // keeping the snapshot's old id would dangle or silently point at an unrelated live
-  // row — so the snapshot is missing a data set it depends on. Reject up front (before
-  // the wipe) with a clear closure requirement rather than corrupt or fail mid-restore.
-  const missingDeps = new Set<string>();
-  for (const t of order) {
-    const rows = snapshot[t];
-    if (!Array.isArray(rows) || rows.length === 0) continue;
-    for (const f of fks[t] ?? []) {
-      if (idMap[f.parent]) continue;              // parent is being restored → remapped
-      if (!meta[t].notNull.has(f.column)) continue; // nullable → nulled on load
-      if (rows.some((r) => r[f.column] != null)) missingDeps.add(groupOf(f.parent));
-    }
-  }
-  if (missingDeps.size) {
-    throw new HttpError(400, `This selective restore depends on data sets that aren't in the backup: ${[...missingDeps].join(', ')}. Include those data sets, or restore a full backup.`);
-  }
+  const polyOf = new Map(POLY_REFS.map((p) => [p.table, p] as const));
 
   let inserted = 0;
+  let loaded = 0;
   await withTransaction(async (client) => {
-    // Wipe the snapshot's tables for this book, children first (RLS-scoped).
-    for (const t of [...order].reverse()) {
-      await client.query(`DELETE FROM "${t}" WHERE book_id = $1`, [bookId]);
+    const plan = await planRestore(bookId, env);
+    if (plan.problems.length) throw new HttpError(400, plan.problems.join(' '));
+    const replaceSet = new Set(plan.replace);
+    const order = topo.filter((t) => plan.snapTables.includes(t));
+    // old-id → new-id per replaced table, so the snapshot's ids are never trusted:
+    // every primary key is regenerated by the DB and every reference remapped.
+    const idMap: Record<string, Map<number, number>> = {};
+    for (const t of plan.replace) idMap[t] = new Map();
+    // Resolve a reference from a restored row: into a replaced table via the id map;
+    // to a row outside the restore only if this book has it. null = unresolved.
+    const resolve = async (parent: string, v: any): Promise<number | null> => {
+      if (replaceSet.has(parent)) return idMap[parent].get(Number(v)) ?? null;
+      return (await plan.liveIds(parent)).has(Number(v)) ? Number(v) : null;
+    };
+    const deferredRefs: { table: string; column: string; parent: string; newId: number; oldVal: number }[] = [];
+
+    // Wipe the replaced data sets for this book, children first (RLS-scoped).
+    for (const t of [...topo].reverse()) {
+      if (replaceSet.has(t)) await client.query(`DELETE FROM "${t}" WHERE book_id = $1`, [bookId]);
     }
-    // Load snapshot, parents first. The DB assigns fresh ids; cross-table FKs are
+    // Load snapshot, parents first. The DB assigns fresh ids; references are
     // remapped to those new ids (parents load first, so their map is ready), and
     // self-references are resolved in a second pass once the table's map is full.
     // Result: a crafted snapshot cannot inject arbitrary primary keys, collide with
@@ -371,36 +476,43 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
     for (const t of order) {
       const rows = snapshot[t];
       if (!Array.isArray(rows) || rows.length === 0) continue;
+      loaded++;
       const m = meta[t];
       const colSet = new Set(m.columns);
-      // Remap references to tables we're also restoring; drop (NULL) references to a
-      // non-restored parent — the pre-flight above already rejected the NOT NULL case.
-      const fkByCol = new Map((fks[t] ?? []).filter((f) => idMap[f.parent]).map((f) => [f.column, f.parent] as const));
-      const orphanFkCols = new Set((fks[t] ?? []).filter((f) => !idMap[f.parent]).map((f) => f.column));
+      const fkByCol = new Map((fks[t] ?? []).map((f) => [f.column, f.parent] as const));
+      const poly = polyOf.get(t);
       const selfRefUpdates: { newId: number; pending: { col: string; oldVal: number }[] }[] = [];
 
-      // Prepare every row's insert columns + values up front (same per-row remap /
-      // base64 / jsonb / self-ref-deferral logic as before), then write them in chunked
-      // multi-row INSERTs. A large restore was previously one INSERT…RETURNING per row —
-      // tens of thousands of serial round-trips inside one long-held transaction.
-      type Prepared = { cols: string[]; vals: any[]; oldId: number | null; pending: { col: string; oldVal: number }[] };
-      const prepared: Prepared[] = rows.map((row) => {
+      // Prepare every row's insert columns + values up front, then write them in
+      // chunked multi-row INSERTs. A row whose required reference can't be resolved
+      // (only possible in a damaged or hand-edited file) is skipped.
+      type Prepared = { cols: string[]; vals: any[]; oldId: number | null; pending: { col: string; oldVal: number }[]; deferred: { parent: string; oldVal: number } | null };
+      const prepared: Prepared[] = [];
+      for (const row of rows) {
         const insCols: string[] = []; const vals: any[] = [];
+        let skip = false;
+        let deferred: Prepared['deferred'] = null;
         for (const c of m.columns) {
           if (c === 'id') continue; // always let the DB assign a fresh primary key
           if (!(c in row)) continue;
           let v = c === 'book_id' ? bookId : row[c];
           if (m.selfRef.has(c) && v != null) continue; // deferred → resolved below
-          if (v != null && fkByCol.has(c)) v = idMap[fkByCol.get(c)!]!.get(Number(v)) ?? v; // remap cross-table ref
-          else if (v != null && orphanFkCols.has(c)) v = null; // unlink from a non-restored parent
+          if (v != null && fkByCol.has(c)) v = await resolve(fkByCol.get(c)!, v);
+          else if (v != null && poly && c === poly.column) {
+            const parent = polyParent(poly, row);
+            if (poly.deferred) { if (parent) deferred = { parent, oldVal: Number(v) }; v = null; }
+            else v = parent ? await resolve(parent, v) : null;
+          }
+          if (v == null && row[c] != null && m.notNull.has(c)) { skip = true; break; }
           if (v != null && m.bytea.has(c)) v = Buffer.from(String(v), 'base64');
           if (v != null && m.jsonb.has(c) && typeof v === 'object') v = JSON.stringify(v);
           insCols.push(c); vals.push(v);
         }
+        if (skip) continue;
         const pending: { col: string; oldVal: number }[] = [];
         if (m.selfRef.size) for (const c of m.selfRef) if (c in row && row[c] != null && colSet.has(c)) pending.push({ col: c, oldVal: Number(row[c]) });
-        return { cols: insCols, vals, oldId: row.id != null ? Number(row.id) : null, pending };
-      });
+        prepared.push({ cols: insCols, vals, oldId: row.id != null ? Number(row.id) : null, pending, deferred });
+      }
 
       // Group rows by their exact column signature so each multi-row INSERT's VALUES all
       // line up (our exports are uniform, but a self-ref column is present only on rows
@@ -413,14 +525,19 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
         let g = groups.get(key); if (!g) { g = []; groups.set(key, g); }
         g.push(p);
       }
+      const track = (p: Prepared, newId: number | null) => {
+        if (newId == null) return;
+        if (p.oldId != null) idMap[t].set(p.oldId, newId);
+        if (p.pending.length) selfRefUpdates.push({ newId, pending: p.pending });
+        if (p.deferred && poly) deferredRefs.push({ table: t, column: poly.column, parent: p.deferred.parent, newId, oldVal: p.deferred.oldVal });
+      };
       for (const grp of groups.values()) {
         const cols = grp[0].cols;
         if (!cols.length) { // no insertable columns → let every default apply
           for (const p of grp) {
             const res = await client.query(`INSERT INTO "${t}" DEFAULT VALUES${ret}`);
             inserted++;
-            const newId = m.hasId ? (res.rows[0] as any)?.id : null;
-            if (newId != null && p.oldId != null) idMap[t].set(p.oldId, newId);
+            track(p, m.hasId ? (res.rows[0] as any)?.id ?? null : null);
           }
           continue;
         }
@@ -432,14 +549,7 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
           const tuples = chunk.map((p) => `(${p.vals.map((v) => { params.push(v); return `$${params.length}`; }).join(',')})`);
           const res = await client.query(`INSERT INTO "${t}" (${colSql}) VALUES ${tuples.join(',')}${ret}`, params);
           inserted += chunk.length;
-          if (m.hasId) {
-            for (let j = 0; j < chunk.length; j++) {
-              const newId = (res.rows[j] as any)?.id;
-              const p = chunk[j];
-              if (newId != null && p.oldId != null) idMap[t].set(p.oldId, newId);
-              if (newId != null && p.pending.length) selfRefUpdates.push({ newId, pending: p.pending });
-            }
-          }
+          if (m.hasId) for (let j = 0; j < chunk.length; j++) track(chunk[j], (res.rows[j] as any)?.id ?? null);
         }
       }
       // Resolve deferred self-references now that this table's id map is complete.
@@ -451,9 +561,14 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
       }
       // No setval needed: ids come from the live sequence, which self-advances.
     }
+    // References that point back at a table loaded later (see POLY_REFS).
+    for (const d of deferredRefs) {
+      const v = await resolve(d.parent, d.oldVal);
+      if (v != null) await client.query(`UPDATE "${d.table}" SET "${d.column}" = $1 WHERE id = $2 AND book_id = $3`, [v, d.newId, bookId]);
+    }
   });
 
-  return { restored_rows: inserted, tables: order.filter((t) => Array.isArray(snapshot[t]) && snapshot[t].length).length };
+  return { restored_rows: inserted, tables: loaded };
 }
 
 // --- Import: restore from an uploaded snapshot file ---------------------------
@@ -764,7 +879,8 @@ async function loadSnapshotEnvelope(bookId: number, id: number): Promise<any> {
 backup.post('/snapshots/:id/preview', ah(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new HttpError(400, 'Bad snapshot id.');
-  res.json(previewEnvelope(await loadSnapshotEnvelope(hh(req), id)));
+  const bookId = hh(req);
+  res.json(await previewEnvelope(bookId, await loadSnapshotEnvelope(bookId, id)));
 }));
 
 // Restore the active book from a stored snapshot.

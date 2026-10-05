@@ -58,29 +58,121 @@ test('selective restore is rejected when it depends on data sets not in the back
   const bud = (await client.post('/api/budgets', { name: 'B', period: 'monthly' })).body.id;
   await client.post(`/api/budgets/${bud}/lines`, { category_id: cat, amount: 100 });
 
-  // Export ONLY the budgets group. budget_lines.category_id FKs to categories and is
-  // NOT NULL, so a restore can neither remap it (categories aren't in the backup) nor
-  // drop it. The pre-flight must refuse before anything is wiped.
+  // Export ONLY the budgets group, and restore it into another book. budget_lines
+  // .category_id is a required link to categories, which aren't in the backup and
+  // don't exist in that book, so the pre-flight must refuse before anything is wiped.
   const env = (await client.get('/api/backup/export?groups=budgets')).body;
-  const imp = await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' });
+  const other = await registerUser(base);
+  const pv = (await other.client.post('/api/backup/preview', env)).body;
+  assert.match(pv.problems.join(' '), /depends on data sets/);
+  const imp = await other.client.post('/api/backup/import', { ...env, confirm: 'REPLACE' });
   assert.equal(imp.status, 400);
   assert.match(imp.body.error, /depends on data sets/);
   assert.match(imp.body.error, /Categories/i);
+
+  // In its own book the category still exists, so the same restore is fine.
+  assert.equal((await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' })).status, 200);
+  assert.equal((await client.get(`/api/budgets/${bud}`)).status, 404, 'the budget was replaced (new id)');
 });
 
-test('selective restore nulls a nullable link whose parent is not in the backup', async () => {
+test('selective restore keeps links to rows this book still has, and drops links it can\'t resolve', async () => {
   const { client } = await registerUser(base);
   const acct = (await client.post('/api/accounts', { name: 'A', type: 'checking' })).body.id;
   await client.post('/api/transactions', { amount: 10, account_id: acct, direction: 'expense', txn_date: '2026-06-01' });
 
-  // transactions.account_id is nullable, so restoring transactions alone is allowed —
-  // the unmappable link is dropped rather than rejected.
+  // Restoring transactions alone into the same book: the account is still there.
   const env = (await client.get('/api/backup/export?groups=transactions')).body;
-  const imp = await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' });
-  assert.equal(imp.status, 200);
+  assert.equal((await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' })).status, 200);
   const txns = (await client.get('/api/transactions')).body.posted;
   assert.equal(txns.length, 1);
-  assert.equal(txns[0].account_id, null, 'the unmappable account link was dropped');
+  assert.equal(txns[0].account_id, acct, 'the account link survives a same-book restore');
+
+  // Into another book, that account doesn't exist: the nullable link is dropped.
+  const other = await registerUser(base);
+  assert.equal((await other.client.post('/api/backup/import', { ...env, confirm: 'REPLACE' })).status, 200);
+  const theirs = (await other.client.get('/api/transactions')).body.posted;
+  assert.equal(theirs.length, 1);
+  assert.equal(theirs[0].account_id, null, 'an unresolvable link is dropped, never pointed at another book');
+});
+
+test('a selective restore that would unlink or delete data outside it is refused, with an accurate preview', async () => {
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  await client.post('/api/transactions', { amount: 10, account_id: acct, direction: 'expense', txn_date: '2026-06-01', merchant: 'Shop' });
+  const env = (await client.get('/api/backup/export?groups=accounts')).body;
+
+  const pv = (await client.post('/api/backup/preview', env)).body;
+  assert.deepEqual(pv.replaces, ['Accounts & balances']);
+  assert.ok(pv.current_rows >= 1);
+  assert.equal(pv.problems.length, 1);
+  assert.match(pv.problems[0], /would unlink or delete records that point at it \(1 in Transactions\)/);
+
+  const imp = await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' });
+  assert.equal(imp.status, 400);
+  assert.match(imp.body.error, /Restore a full backup instead/);
+  const txns = (await client.get('/api/transactions')).body.posted;
+  assert.equal(txns[0].account_id, acct, 'nothing changed');
+
+  // A tag on a transaction pointing at a vehicle blocks a vehicles-only restore too
+  // (a reference that isn't a declared foreign key).
+  const veh = (await client.post('/api/vehicles', { name: 'Car' })).body.id;
+  await client.post('/api/transactions', { amount: 5, account_id: acct, direction: 'expense', txn_date: '2026-06-02', tags: [{ kind: 'vehicle', ref_id: veh }] });
+  const vEnv = (await client.get('/api/backup/export?groups=vehicles')).body;
+  const vImp = await client.post('/api/backup/import', { ...vEnv, confirm: 'REPLACE' });
+  assert.equal(vImp.status, 400);
+  assert.match(vImp.body.error, /1 in Transactions/);
+  void bookId;
+});
+
+test('a full restore remaps references that aren\'t foreign keys (tags, managed categories, insurance, maintenance links)', async () => {
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const veh = (await client.post('/api/vehicles', { name: 'Blue Car' })).body.id;
+  const tagged = (await client.post('/api/transactions', {
+    amount: 40, account_id: acct, direction: 'expense', txn_date: '2026-06-01', merchant: 'Oil Change', tags: [{ kind: 'vehicle', ref_id: veh }],
+  })).body.id;
+  assert.equal((await client.post(`/api/vehicles/${veh}/insurance`, { policy_type: 'Auto', carrier: 'Acme' })).status, 201);
+  const util = (await client.post('/api/utilities/accounts', { name: 'City Power', utility_type: 'electricity' })).body.id;
+  const asset = (await client.post('/api/assets', { name: 'Boat', kind: 'other' })).body.id;
+  const maint = (await client.post(`/api/assets/${asset}/maintenance`, { item: 'Winterize' })).body.id;
+  const db = testDbClient();
+  await db.connect();
+  const read = async () => {
+    const one = async (sql: string) => (await db.query(sql, [bookId])).rows;
+    return {
+      tag: await one(`SELECT v.name FROM line_tags lt JOIN vehicles v ON v.id = lt.ref_id AND v.book_id = lt.book_id JOIN transactions t ON t.id = lt.transaction_id WHERE lt.book_id = $1 AND lt.kind = 'vehicle' AND t.merchant = 'Oil Change'`),
+      ins: await one(`SELECT v.name FROM insurance_policies ip JOIN vehicles v ON v.id = ip.entity_id AND v.book_id = ip.book_id WHERE ip.book_id = $1 AND ip.entity_kind = 'vehicle'`),
+      cat: await one(`SELECT u.name FROM categories c JOIN utility_accounts u ON u.id = c.source_id AND u.book_id = c.book_id WHERE c.book_id = $1 AND c.managed AND c.source_kind = 'utility'`),
+      maint: await one(`SELECT t.merchant FROM asset_maintenance m JOIN transactions t ON t.id = m.transaction_id AND t.book_id = m.book_id WHERE m.book_id = $1`),
+    };
+  };
+  try {
+    await db.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
+    await db.query(`UPDATE asset_maintenance SET transaction_id = $1 WHERE id = $2`, [tagged, maint]);
+    const before = await read();
+    assert.deepEqual(before, { tag: [{ name: 'Blue Car' }], ins: [{ name: 'Blue Car' }], cat: [{ name: 'City Power' }], maint: [{ merchant: 'Oil Change' }] });
+
+    const env = (await client.get('/api/backup/export')).body;
+    assert.equal((await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' })).status, 200);
+    assert.deepEqual(await read(), before, 'every reference points at the restored row');
+    assert.equal((await client.get(`/api/vehicles/${veh}`)).status, 404, 'ids were regenerated');
+    void util;
+
+    // The same backup restored into another book resolves within that book.
+    const other = await registerUser(base);
+    assert.equal((await other.client.post('/api/backup/import', { ...env, confirm: 'REPLACE' })).status, 200);
+    await db.query(`SELECT set_config('app.book_id', $1, false)`, [String(other.bookId)]);
+    const theirs = await (async () => {
+      const one = async (sql: string) => (await db.query(sql, [other.bookId])).rows;
+      return {
+        tag: await one(`SELECT v.name FROM line_tags lt JOIN vehicles v ON v.id = lt.ref_id AND v.book_id = lt.book_id WHERE lt.book_id = $1`),
+        cat: await one(`SELECT u.name FROM categories c JOIN utility_accounts u ON u.id = c.source_id AND u.book_id = c.book_id WHERE c.book_id = $1 AND c.managed AND c.source_kind = 'utility'`),
+      };
+    })();
+    assert.deepEqual(theirs, { tag: [{ name: 'Blue Car' }], cat: [{ name: 'City Power' }] });
+  } finally {
+    await db.end();
+  }
 });
 
 test('snapshot: stored-snapshot preview, corruption handling, and delete', async () => {

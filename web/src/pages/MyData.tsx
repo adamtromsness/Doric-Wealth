@@ -72,6 +72,9 @@ interface Preview {
   schema_mismatch: boolean;
   total_rows: number;
   counts: Record<string, number>;
+  replaces: string[];
+  current_rows: number;
+  problems: string[];
 }
 
 export default function MyData() {
@@ -495,12 +498,19 @@ export default function MyData() {
                 {topTables.map(([t, n]) => <span key={t} className="tag" style={{ fontSize: 11, textTransform: 'none' }}>{t.replace(/_/g, ' ')}: {n}</span>)}
               </div>
             )}
-            <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>This replaces the data sets the snapshot contains. A <strong>pre-restore safety snapshot</strong> downloads to your computer right before the replace.</div>
+            <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+              This replaces <strong>{preview.replaces.join(', ')}</strong>: the {preview.current_rows.toLocaleString()} records in {preview.replaces.length === 1 ? 'it' : 'them'} now are removed and the snapshot's records are loaded. A <strong>pre-restore safety snapshot</strong> downloads to your computer right before the replace.
+            </div>
+            {preview.problems.length > 0 && (
+              <div className="error" role="alert" style={{ marginTop: 10 }}>
+                {preview.problems.map((p) => <div key={p}>{p}</div>)}
+              </div>
+            )}
             <div className="grid grid-2" style={{ alignItems: 'end', marginTop: 12 }}>
               <label className="field"><span>Type <strong>REPLACE</strong> to confirm</span><input value={confirmText} onChange={(e) => setConfirmText(e.target.value)} placeholder="REPLACE" /></label>
               <div className="row" style={{ justifyContent: 'flex-end', gap: 8 }}>
                 <button className="ghost" onClick={cancelRestore} disabled={restoring}>Cancel</button>
-                <button className="danger" onClick={restore} disabled={confirmText !== 'REPLACE' || restoring}>{restoring ? 'Restoring…' : 'Replace Data'}</button>
+                <button className="danger" onClick={restore} disabled={confirmText !== 'REPLACE' || restoring || preview.problems.length > 0}>{restoring ? 'Restoring…' : 'Replace Data'}</button>
               </div>
             </div>
           </div>
