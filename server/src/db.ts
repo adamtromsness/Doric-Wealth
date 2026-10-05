@@ -56,11 +56,24 @@ export async function assertSafeAppRole(): Promise<void> {
 // automatically, so every statement in the request is tenant-scoped at the DB.
 // `inTransaction` marks a binding that is already inside a transaction (background
 // jobs, see withBookContext); withTransaction then nests with a savepoint.
-export const requestStore = new AsyncLocalStorage<{ client: pg.PoolClient; inTransaction?: boolean }>();
+// `released` is set when the request's connection has gone back to the pool (or been
+// discarded): any later query from that request's code fails instead of running on a
+// connection that may now belong to another request (and another book).
+export interface RequestBinding { client: pg.PoolClient; inTransaction?: boolean; released?: boolean }
+export const requestStore = new AsyncLocalStorage<RequestBinding>();
+
+export class ReleasedConnectionError extends Error {
+  constructor() { super('This request has ended; its database connection was released.'); this.name = 'ReleasedConnectionError'; }
+}
+function bound(): pg.PoolClient | undefined {
+  const store = requestStore.getStore();
+  if (store?.released) throw new ReleasedConnectionError();
+  return store?.client;
+}
 
 type Queryable = Pick<pg.PoolClient, 'query'>;
 function runner(): Queryable {
-  return requestStore.getStore()?.client ?? pool;
+  return bound() ?? pool;
 }
 
 export async function query<T = any>(text: string, params: any[] = []): Promise<T[]> {
@@ -91,27 +104,27 @@ let savepointSeq = 0;
 // savepoint instead of issuing a second BEGIN, whose COMMIT would end the outer one.
 export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<T>, opts: TxOptions = {}): Promise<T> {
   const store = requestStore.getStore();
-  const bound = store?.client;
-  if (bound && store?.inTransaction) {
+  const boundClient = bound();
+  if (boundClient && store?.inTransaction) {
     const sp = `sp_${++savepointSeq}`;
-    await bound.query(`SAVEPOINT ${sp}`);
+    await boundClient.query(`SAVEPOINT ${sp}`);
     try {
-      const result = await fn(bound);
-      await bound.query(`RELEASE SAVEPOINT ${sp}`);
+      const result = await fn(boundClient);
+      await boundClient.query(`RELEASE SAVEPOINT ${sp}`);
       return result;
     } catch (e) {
-      await bound.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
+      await boundClient.query(`ROLLBACK TO SAVEPOINT ${sp}`).catch(() => {});
       throw e;
     }
   }
-  if (bound) {
-    await bound.query(beginSql(opts));
+  if (boundClient) {
+    await boundClient.query(beginSql(opts));
     try {
-      const result = await fn(bound);
-      await bound.query('COMMIT');
+      const result = await fn(boundClient);
+      await boundClient.query('COMMIT');
       return result;
     } catch (e) {
-      await bound.query('ROLLBACK');
+      await boundClient.query('ROLLBACK');
       throw e;
     }
   }

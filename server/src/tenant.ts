@@ -3,7 +3,7 @@
 // gate routes. Tenant-scoped routes read `hh(req)` and add `book_id = $n` to
 // every query (see routes/accounts.ts for the canonical pattern).
 import type { Request, Response, NextFunction } from 'express';
-import { one, query, pool, requestStore } from './db.js';
+import { one, query, pool, requestStore, type RequestBinding } from './db.js';
 import { HttpError } from './http.js';
 import { SESSION_COOKIE, readCookie, hashToken } from './auth.js';
 
@@ -75,20 +75,27 @@ export function tenantDb(req: Request, res: Response, next: NextFunction) {
   if (!req.book) return next();
   pool.connect().then(
     (client) => {
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        client.query('RESET ALL').catch(() => {}).finally(() => client.release());
+      const binding: RequestBinding = { client };
+      // Once released, the binding refuses further queries (see db.ts), so code still
+      // running for this request can't use a connection another request now owns.
+      //  - Response finished: reset the tenant settings and return the connection to
+      //    the pool; if the reset fails, discard the connection instead.
+      //  - Client went away before the response finished (aborted): the handler may
+      //    still be mid-query, so discard the connection rather than reuse it.
+      const release = (aborted: boolean) => {
+        if (binding.released) return;
+        binding.released = true;
+        if (aborted) { client.release(true); return; }
+        client.query('RESET ALL').then(() => client.release(), (e) => client.release(e));
       };
-      res.on('finish', release);
-      res.on('close', release);
+      res.on('finish', () => release(false));
+      res.on('close', () => release(!res.writableFinished));
       client.query(
         `SELECT set_config('app.book_id', $1, false), set_config('app.user_id', $2, false)`,
         [String(req.book!.id), String(req.user?.id ?? '')]
       )
-        .then(() => requestStore.run({ client }, () => next()))
-        .catch((e) => { release(); next(e); });
+        .then(() => requestStore.run(binding, () => next()))
+        .catch((e) => { release(true); next(e); });
     },
     (err) => next(err)
   );
