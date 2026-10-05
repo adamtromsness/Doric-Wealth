@@ -19,6 +19,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ### Changed
 - If you switch books in one tab, other open tabs now refresh to that book instead of saving into it unexpectedly. A change made in a tab that was still showing the old book is stopped with a message, so you can check it and try again.
+- **Bank imports (SimpleFIN)** bring in transactions once they post. Pending ones are left until then, and the **Include pending transactions** option is gone for now. Before, a pending charge was imported as final, so its posted amount and date never arrived.
 - **Invite links** now work once and expire after 7 days by default, and the invite list shows each link's use count and expiry date. Before, links worked any number of times until revoked.
 
 ### Fixed

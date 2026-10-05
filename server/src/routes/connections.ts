@@ -16,6 +16,13 @@ import { cleanMerchant, setImportStatus, autoLinkTransferRules } from './imports
 
 export const connections = Router();
 
+// Pending bank transactions are not imported for now. Once imported, a transaction is
+// skipped by later syncs (its provider id is known), so a pending charge would keep its
+// pending amount and date forever, and some banks give the posted version a new id,
+// which would import it twice. Until pending-to-posted updates are handled, every sync
+// asks for posted transactions only, whatever a link's include_pending says.
+export const PENDING_IMPORTS_ENABLED = false;
+
 // Upsert account_links for every external account the provider returns, so banks
 // added to the connection AFTER it was claimed get discovered (they appear unmapped
 // until the user maps them). ON CONFLICT only refreshes metadata — it never clears an
@@ -203,6 +210,9 @@ export async function stageSimplefinTxns(
       total++;
       const amt = Number(t.amount);
       if (!Number.isFinite(amt) || amt === 0) { skipped++; continue; }
+      // A pending transaction sent anyway (see PENDING_IMPORTS_ENABLED) is left for a
+      // later sync, once it has posted.
+      if (!PENDING_IMPORTS_ENABLED && (t.pending || !t.posted)) { skipped++; continue; }
       const direction = amt < 0 ? 'expense' : 'income';        // negative = money out
       const amount = round2(Math.abs(amt)); // snap provider float to cents so the dedup match below is exact
       // SimpleFIN sends posted=0 for still-pending transactions, so `||` (not `??`)
@@ -347,7 +357,7 @@ async function syncBookLinks(bookId: number): Promise<void> {
     const since = link.last_synced_epoch ? Number(link.last_synced_epoch) - 4 * 86400 : nowS - 90 * 86400;
     let pulled;
     try {
-      pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: link.include_pending });
+      pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: PENDING_IMPORTS_ENABLED && link.include_pending });
     } catch (e) {
       await markLinkError(bookId, link.id, e);
       continue;
@@ -423,12 +433,12 @@ connections.post('/simplefin/claim', ah(async (req, res) => {
 connections.get('/', ah(async (req, res) => {
   const bookId = hh(req);
   const links = await query(
-    `SELECT id, provider, status, last_error, account_errors, include_pending, auto_import_enabled, auto_import_frequency,
+    `SELECT id, provider, status, last_error, account_errors, (include_pending AND $2::boolean) AS include_pending, auto_import_enabled, auto_import_frequency,
             to_char(auto_import_start_at, 'YYYY-MM-DD"T"HH24:MI') AS auto_import_start_at,
             to_char(last_synced_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS last_synced_at,
             to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS connected_at
        FROM institution_links WHERE book_id = $1 ORDER BY id`,
-    [bookId]
+    [bookId, PENDING_IMPORTS_ENABLED]
   );
   const accts = await query(
     `SELECT al.id, al.link_id, al.external_account_id, al.name AS sf_name, al.org_name, al.currency,
@@ -692,7 +702,7 @@ connections.post('/:id/sync', ah(async (req, res) => {
 
   let pulled;
   try {
-    pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: link.include_pending });
+    pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: PENDING_IMPORTS_ENABLED && link.include_pending });
   } catch (e: any) {
     await query(`UPDATE institution_links SET status = 'error', last_error = $2 WHERE id = $1 AND book_id = $3`,
       [linkId, String(e?.message ?? 'Sync failed.').slice(0, 300), bookId]);
@@ -712,7 +722,11 @@ connections.post('/:id/settings', ah(async (req, res) => {
   const bookId = hh(req);
   const linkId = integerId(req.params.id, 'id');
   const sets: string[] = []; const vals: any[] = [];
-  if ('include_pending' in req.body) { vals.push(booleanValue(req.body.include_pending, 'include_pending')); sets.push(`include_pending = $${vals.length}`); }
+  if ('include_pending' in req.body) {
+    const v = booleanValue(req.body.include_pending, 'include_pending');
+    if (v && !PENDING_IMPORTS_ENABLED) throw new HttpError(400, "Pending transactions can't be imported yet. Doric imports transactions once they post.");
+    vals.push(v); sets.push(`include_pending = $${vals.length}`);
+  }
   if ('auto_import_enabled' in req.body) { vals.push(booleanValue(req.body.auto_import_enabled, 'auto_import_enabled')); sets.push(`auto_import_enabled = $${vals.length}`); }
   if ('auto_import_frequency' in req.body) { vals.push(enumValue(req.body.auto_import_frequency, 'auto_import_frequency', ['daily', 'weekly'])); sets.push(`auto_import_frequency = $${vals.length}`); }
   if ('auto_import_start_at' in req.body) {
