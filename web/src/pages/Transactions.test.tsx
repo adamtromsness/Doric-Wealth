@@ -199,6 +199,29 @@ describe('Transactions page', () => {
     expect(screen.getByText('1 total')).toBeInTheDocument();
   });
 
+  it('shows transaction and posted dates, sorted by transaction date by default; headers change the sort', async () => {
+    const user = userEvent.setup();
+    setup({
+      posted: [txn({ txn_date: '2026-09-01', posted_date: '2026-09-03' })], total: 1,
+      pending: [txn({ id: 2, merchant: 'Pending Shop', txn_date: '2026-09-04', posted_date: null })], pendingTotal: 1,
+    });
+    renderPage();
+    await screen.findByText('Pending Shop');
+    expect(lastTxnUrl()).toContain('sort=txn_date&dir=desc');
+    // Posted list has both dates; pending (not posted yet) has the transaction date only.
+    expect(screen.getAllByRole('columnheader', { name: /Transaction Date/ })).toHaveLength(2);
+    expect(screen.getAllByRole('columnheader', { name: /Posted Date/ })).toHaveLength(1);
+    expect(screen.getByText('Sep 1, 2026')).toBeInTheDocument();
+    expect(screen.getByText('Sep 3, 2026')).toBeInTheDocument();
+    expect(screen.getAllByRole('columnheader', { name: /Transaction Date ▼/ })[0]).toHaveAttribute('aria-sort', 'descending');
+
+    await user.click(screen.getByRole('button', { name: /Posted Date/ }));
+    await waitFor(() => expect(lastTxnUrl()).toContain('sort=posted_date&dir=desc'));
+    await user.click(screen.getByRole('button', { name: /Posted Date/ }));
+    await waitFor(() => expect(lastTxnUrl()).toContain('sort=posted_date&dir=asc'));
+    expect(screen.getByRole('columnheader', { name: /Posted Date ▲/ })).toHaveAttribute('aria-sort', 'ascending');
+  });
+
   it('renders income with a positive amount and a dash for missing fields', async () => {
     setup({ posted: [txn({ id: 2, direction: 'income', amount: 1000, category_name: 'Salary', merchant: null, description: null, purchaser: null, channel: null })], total: 1 });
     renderPage();

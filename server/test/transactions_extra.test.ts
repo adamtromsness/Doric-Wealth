@@ -273,3 +273,25 @@ test('AI endpoints validate input before invoking the model', async () => {
   const enrich = await client.post('/api/transactions/enrich-items', { items: [{ name: 'Milk 32 oz' }] });
   assert.ok([200, 500, 502, 503].includes(enrich.status), `enrich status ${enrich.status}`);
 });
+
+test('GET /transactions sorts by transaction date (default) or posted date, either direction', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const mk = (merchant: string, txn_date: string, posted_date: string | null) =>
+    client.post('/api/transactions', { amount: 1, account_id: acct, direction: 'expense', merchant, txn_date, posted_date });
+  await mk('A', '2026-09-01', '2026-09-10'); // oldest purchase, latest posting
+  await mk('B', '2026-09-05', '2026-09-06');
+  await mk('C', '2026-09-03', '2026-09-04');
+  await mk('P1', '2026-09-02', null);
+  await mk('P2', '2026-09-04', null);
+  const order = async (qs = '') => {
+    const r = (await client.get(`/api/transactions?limit=50${qs}`)).body;
+    return { posted: r.posted.map((t: any) => t.merchant).join(''), pending: r.pending.map((t: any) => t.merchant).join(',') };
+  };
+  assert.deepEqual(await order(), { posted: 'BCA', pending: 'P2,P1' }, 'default: transaction date, newest first');
+  assert.deepEqual(await order('&sort=txn_date&dir=asc'), { posted: 'ACB', pending: 'P1,P2' });
+  assert.deepEqual(await order('&sort=posted_date'), { posted: 'ABC', pending: 'P2,P1' }, 'pending stays by transaction date');
+  assert.deepEqual(await order('&sort=posted_date&dir=asc'), { posted: 'CBA', pending: 'P1,P2' });
+  // Anything else falls back to the default (no SQL from the query string).
+  assert.deepEqual(await order('&sort=amount;drop&dir=sideways'), { posted: 'BCA', pending: 'P2,P1' });
+});

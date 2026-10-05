@@ -355,6 +355,13 @@ table.ledger th {
   border-bottom: 1px solid var(--hairline-strong);
 }
 table.ledger th.r, table.ledger td.r { text-align: right; }
+/* Sortable column header: looks like the header text, with the sort arrow. */
+table.ledger th button.th-sort {
+  background: none; border: 0; padding: 0; margin: 0; box-shadow: none;
+  font: inherit; color: inherit; letter-spacing: inherit; text-transform: inherit;
+  cursor: pointer; white-space: nowrap;
+}
+table.ledger th button.th-sort:hover { color: var(--ink); background: none; }
 table.ledger td { padding: 9px 12px; border-bottom: 1px solid var(--hairline); }
 /* Transaction rows can be tall (merchant has a description line); top-align all
    cells so the date/amount/etc. line up with the merchant instead of centering. */

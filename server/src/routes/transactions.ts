@@ -261,18 +261,24 @@ transactions.get(
        LEFT JOIN accounts a ON a.id = t.account_id
        LEFT JOIN accounts ta ON ta.id = t.transfer_account_id
        LEFT JOIN receipts r ON r.transaction_id = t.id`;
-    const ORDER = `ORDER BY t.txn_date DESC, t.id DESC`;
+    // Sort: by transaction date (default) or posted date, newest first unless dir=asc.
+    // Whitelisted, so safe to interpolate. Pending rows have no posted date, so that
+    // list always sorts by transaction date (in the chosen direction).
+    const sortCol = req.query.sort === 'posted_date' ? 'posted_date' : 'txn_date';
+    const dir = req.query.dir === 'asc' ? 'ASC' : 'DESC';
+    const POSTED_ORDER = `ORDER BY t.${sortCol} ${dir}, t.txn_date ${dir}, t.id ${dir}`;
+    const PENDING_ORDER = `ORDER BY t.txn_date ${dir}, t.id ${dir}`;
     const n = params.length;
     const count = async (extra: string) =>
       Number((await one<{ count: number }>(`SELECT count(*)::int AS count FROM transactions t ${cond(extra)}`, params))?.count ?? 0);
 
     // Pending and posted are each paginated independently (shared page size).
     const pendingRows = await query(
-      `${SELECT} ${cond('t.posted_date IS NULL')} ${ORDER} LIMIT $${n + 1} OFFSET $${n + 2}`,
+      `${SELECT} ${cond('t.posted_date IS NULL')} ${PENDING_ORDER} LIMIT $${n + 1} OFFSET $${n + 2}`,
       [...params, limit, pendingOffset]
     );
     const postedRows = await query(
-      `${SELECT} ${cond('t.posted_date IS NOT NULL')} ${ORDER} LIMIT $${n + 1} OFFSET $${n + 2}`,
+      `${SELECT} ${cond('t.posted_date IS NOT NULL')} ${POSTED_ORDER} LIMIT $${n + 1} OFFSET $${n + 2}`,
       [...params, limit, postedOffset]
     );
     const pendingTotal = await count('t.posted_date IS NULL');

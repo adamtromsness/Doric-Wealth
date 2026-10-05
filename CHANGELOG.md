@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Changed
+- **Transactions** shows both the **Transaction Date** and the **Posted Date** (posted list), sorted by transaction date, newest first. Click either date heading to sort by it; click again to reverse. Amounts no longer wrap onto two lines (#8).
+
 ## [1.6.1] - 2026-10-05
 
 ### Fixed
