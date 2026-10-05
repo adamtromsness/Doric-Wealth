@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Transactions from './Transactions';
@@ -283,15 +283,34 @@ describe('Transactions page', () => {
     expect(await screen.findByText(/principal \$400\.00 · costs \$100\.00/)).toBeInTheDocument();
   });
 
-  it('shows the pending section and marks a row posted', async () => {
-    setup({ pending: [txn({ id: 7, posted_date: null, merchant: 'Pending Co' })], pendingTotal: 1 });
+  it('shows the pending section; Mark Posted asks for the date, pre-filled with the purchase date', async () => {
+    setup({ pending: [txn({ id: 7, posted_date: null, merchant: 'Pending Co', txn_date: '2026-08-04' })], pendingTotal: 1 });
     renderPage();
     expect(await screen.findByText('Pending Co')).toBeInTheDocument();
     expect(screen.getByText('1 awaiting posting')).toBeInTheDocument();
     // Posted list reports the pending-aware empty copy.
     expect(screen.getByText('No posted transactions match.')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Mark Posted' }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/transactions/7/post'));
+    const dialog = document.querySelector('.modal') as HTMLElement;
+    expect(within(dialog).getByText('Mark as Posted')).toBeInTheDocument();
+    const date = dialog.querySelector('input[type="date"]') as HTMLInputElement;
+    expect(date.value).toBe('2026-08-04'); // the purchase date, not today
+    expect(api.post).not.toHaveBeenCalledWith('/transactions/7/post', expect.anything());
+    fireEvent.change(date, { target: { value: '2026-08-06' } });
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Mark Posted' }));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/transactions/7/post', { posted_date: '2026-08-06' }));
+    await waitFor(() => expect(document.querySelector('.modal')).toBeNull());
+  });
+
+  it('Mark Posted moves a weekend purchase date to Monday, and can be cancelled', async () => {
+    setup({ pending: [txn({ id: 8, posted_date: null, txn_date: '2026-10-03' })], pendingTotal: 1 }); // a Saturday
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: 'Mark Posted' }));
+    const dialog = document.querySelector('.modal') as HTMLElement;
+    expect((dialog.querySelector('input[type="date"]') as HTMLInputElement).value).toBe('2026-10-05');
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(document.querySelector('.modal')).toBeNull();
+    expect(api.post).not.toHaveBeenCalledWith('/transactions/8/post', expect.anything());
   });
 
   it('surfaces a mark-posted failure', async () => {
@@ -299,6 +318,7 @@ describe('Transactions page', () => {
     (api.post as any).mockRejectedValue(new Error('post boom'));
     renderPage();
     await userEvent.click(await screen.findByRole('button', { name: 'Mark Posted' }));
+    await userEvent.click(within(document.querySelector('.modal') as HTMLElement).getByRole('button', { name: 'Mark Posted' }));
     expect(await screen.findByText('post boom')).toBeInTheDocument();
   });
 

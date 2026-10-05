@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Fixed
+- **Mark Posted** now asks for the posted date, pre-filled with the purchase date (moved to Monday for weekend purchases). Before, it stamped today's date, which was wrong when catching up on transactions that cleared earlier (#9).
+
 ### Changed
 - **Transactions** shows both the **Transaction Date** and the **Posted Date** (posted list), sorted by transaction date, newest first. Click either date heading to sort by it; click again to reverse. Amounts no longer wrap onto two lines (#8).
 

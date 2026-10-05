@@ -595,13 +595,20 @@ transactions.post(
   })
 );
 
-// Mark a pending transaction posted (default: today), or back to pending (null).
+// Mark a pending transaction posted on a date, or back to pending ({ posted: false }).
+// Without a date it posts on the transaction's own date, never "today": catching up on
+// transactions that cleared days ago would otherwise stamp the wrong posting date,
+// which moves balances across snapshot cutoffs.
 transactions.post(
   '/:id/post',
   ah(async (req, res) => {
-    if (req.body?.posted !== false) optionalDateOnly(req.body?.posted_date, 'posted_date');
-    const posted = req.body?.posted === false ? null : (req.body?.posted_date ?? new Date().toISOString().slice(0, 10));
-    const row = await one(`UPDATE transactions SET posted_date = $2 WHERE id = $1 AND book_id = $3 RETURNING *`, [req.params.id, posted, hh(req)]);
+    const unpost = req.body?.posted === false;
+    const date = unpost ? null : optionalDateOnly(req.body?.posted_date, 'posted_date');
+    const row = await one(
+      `UPDATE transactions SET posted_date = CASE WHEN $4 THEN NULL ELSE COALESCE($2::date, txn_date) END
+        WHERE id = $1 AND book_id = $3 RETURNING *`,
+      [req.params.id, date, hh(req), unpost]
+    );
     if (!row) throw new HttpError(404, 'Transaction not found');
     res.json(row);
   })

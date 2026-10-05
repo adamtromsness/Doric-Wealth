@@ -295,3 +295,15 @@ test('GET /transactions sorts by transaction date (default) or posted date, eith
   // Anything else falls back to the default (no SQL from the query string).
   assert.deepEqual(await order('&sort=amount;drop&dir=sideways'), { posted: 'BCA', pending: 'P2,P1' });
 });
+
+test('POST /:id/post without a date uses the transaction\'s own date, never today', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const t = (await client.post('/api/transactions', { amount: 5, account_id: acct, direction: 'expense', txn_date: '2026-09-02', posted_date: null })).body;
+  const r = await client.post(`/api/transactions/${t.id}/post`, {});
+  assert.equal(r.status, 200);
+  assert.equal(String(r.body.posted_date).slice(0, 10), '2026-09-02');
+  // An explicit date still wins; posted:false still un-posts.
+  assert.equal(String((await client.post(`/api/transactions/${t.id}/post`, { posted_date: '2026-09-04' })).body.posted_date).slice(0, 10), '2026-09-04');
+  assert.equal((await client.post(`/api/transactions/${t.id}/post`, { posted: false })).body.posted_date, null);
+});

@@ -5,12 +5,12 @@ import { type Filters, DEFAULT_FILTERS, chip, buildTxnParams, TxnFilterBar } fro
 import { ImportModal } from '../components/ImportModal';
 import { ImportSimpleFinModal } from '../components/ImportSimpleFinModal';
 import { SubscriptionSuggestionDetail, justification, type SubscriptionSuggestion } from '../components/SubscriptionSuggestions';
-import { cap } from '../components/ui';
+import { cap, Modal, Field, EditorFooter } from '../components/ui';
 import type { Category, StagedTxn } from '../types';
 import {
   type Txn, type Tag, type Account, type Vehicle, type Property, type Subscription, type UserTag,
   type TxnPage,
-  CHANNEL_LABEL, recurringKey, stagedSkipReason, tagKey,
+  CHANNEL_LABEL, recurringKey, stagedSkipReason, tagKey, businessDay,
   FILTER_KEY, loadStored, deepLinkFilters, PAGE_SIZE,
 } from './transactions/helpers';
 import { Pager } from './transactions/common';
@@ -181,8 +181,18 @@ export default function Transactions() {
     [pending, posted]
   );
 
-  const markPosted = async (t: Txn) => {
-    try { await api.post(`/transactions/${t.id}/post`); load(); } catch (e: any) { setErr(e.message); }
+  // Mark Posted asks for the date it posted, pre-filled with the purchase date (moved
+  // off a weekend), rather than stamping today: when catching up, today is usually
+  // wrong, and the posted date decides which balance snapshot a transaction falls in.
+  const [posting, setPosting] = useState<{ txn: Txn; date: string } | null>(null);
+  const [postingBusy, setPostingBusy] = useState(false);
+  const markPosted = (t: Txn) => setPosting({ txn: t, date: businessDay(t.txn_date.slice(0, 10)) });
+  const confirmPosted = async () => {
+    if (!posting) return;
+    setPostingBusy(true);
+    try { await api.post(`/transactions/${posting.txn.id}/post`, { posted_date: posting.date }); setPosting(null); load(); }
+    catch (e: any) { setErr(e.message); }
+    finally { setPostingBusy(false); }
   };
 
   // --- Import review actions ---
@@ -607,6 +617,17 @@ export default function Transactions() {
         </table>
       </div>
       <Pager page={postedSafePage} pageCount={postedPageCount} total={total} start={postedStart} count={posted.length} onPage={setPostedPage} />
+
+      {posting && (
+        <Modal title="Mark as Posted" subtitle={`${posting.txn.merchant || 'Transaction'} · ${money(Number(posting.txn.amount))} · made ${shortDate(posting.txn.txn_date)}`} onClose={() => setPosting(null)}>
+          <Field label="Posted Date">
+            <input type="date" value={posting.date} min={posting.txn.txn_date.slice(0, 10)}
+              onChange={(e) => setPosting({ ...posting, date: e.target.value })} />
+          </Field>
+          <p className="muted" style={{ fontSize: 12, marginTop: 0 }}>The day it cleared your account, from your statement or bank app. It decides which balance snapshot the transaction counts toward.</p>
+          <EditorFooter onClose={() => setPosting(null)} onSave={confirmPosted} saveLabel="Mark Posted" saving={postingBusy} disabled={!posting.date} />
+        </Modal>
+      )}
 
       {(adding || editing) && (
         <TxnEditor
