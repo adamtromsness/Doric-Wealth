@@ -53,39 +53,45 @@ export const SERVICE_TYPES: [string, string][] = [
 export const serviceTypeLabel = (t: string | null) => (t ? SERVICE_TYPES.find(([v]) => v === t)?.[1] ?? t : '—');
 // Default type for each quick-fill service.
 export const PRESET_TYPE: Record<string, string> = {
-  Netflix: 'streaming', Spotify: 'music', 'Disney+': 'streaming', Hulu: 'streaming', Max: 'streaming',
+  Netflix: 'streaming', Spotify: 'music', 'Disney+': 'streaming', Hulu: 'streaming', 'HBO Max': 'streaming',
   'Amazon Prime': 'membership', 'YouTube Premium': 'streaming', 'Apple Music': 'music', 'Apple One': 'other',
   'iCloud+': 'cloud', 'Google One': 'cloud', 'Paramount+': 'streaming', Peacock: 'streaming',
-  'Microsoft 365': 'software', 'Adobe Creative Cloud': 'software', 'ChatGPT Plus': 'software',
+  'Microsoft 365': 'software', 'Adobe Creative Cloud': 'software', ChatGPT: 'software',
   'Xbox Game Pass': 'gaming', 'PlayStation Plus': 'gaming', Costco: 'membership', 'Planet Fitness': 'fitness',
 };
 
-// Quick-fill catalog of common services. Prices are approximate US starting
-// points (editable after you pick one). cycle defaults to 'monthly'.
+// Quick-fill catalog of common services: typical US list prices, a starting point the
+// user can edit (they never change an existing subscription). cycle defaults to
+// 'monthly'. Checked on PRESET_PRICES_AS_OF against each provider's US pricing page,
+// or news reports of its latest price change where the page didn't show prices.
+export const PRESET_PRICES_AS_OF = '2026-10-05';
 export interface PresetTier { tier: string; amount: number; cycle?: Subscription['billing_cycle'] }
 export interface ServicePreset { name: string; tiers: PresetTier[] }
 export const SERVICE_PRESETS: ServicePreset[] = [
-  { name: 'Netflix', tiers: [{ tier: 'Standard with ads', amount: 7.99 }, { tier: 'Standard', amount: 17.99 }, { tier: 'Premium 4K', amount: 24.99 }] },
-  { name: 'Spotify', tiers: [{ tier: 'Student', amount: 5.99 }, { tier: 'Individual', amount: 11.99 }, { tier: 'Duo', amount: 16.99 }, { tier: 'Family', amount: 19.99 }] },
-  { name: 'Disney+', tiers: [{ tier: 'Basic (ads)', amount: 9.99 }, { tier: 'Premium', amount: 15.99 }] },
-  { name: 'Hulu', tiers: [{ tier: 'With ads', amount: 9.99 }, { tier: 'No ads', amount: 18.99 }] },
-  { name: 'Max', tiers: [{ tier: 'With ads', amount: 9.99 }, { tier: 'Ad-free', amount: 16.99 }, { tier: 'Ultimate', amount: 20.99 }] },
+  { name: 'Netflix', tiers: [{ tier: 'Standard with ads', amount: 8.99 }, { tier: 'Standard', amount: 19.99 }, { tier: 'Premium', amount: 26.99 }] },
+  { name: 'Spotify', tiers: [{ tier: 'Student', amount: 6.99 }, { tier: 'Individual', amount: 12.99 }, { tier: 'Duo', amount: 18.99 }, { tier: 'Family', amount: 21.99 }] },
+  { name: 'Disney+', tiers: [{ tier: 'With ads', amount: 12.49 }, { tier: 'Premium (no ads)', amount: 21.49 }] },
+  { name: 'Hulu', tiers: [{ tier: 'With ads', amount: 12.49 }, { tier: 'Premium (no ads)', amount: 21.49 }] },
+  { name: 'HBO Max', tiers: [{ tier: 'Basic with ads', amount: 10.99 }, { tier: 'Standard', amount: 18.49 }, { tier: 'Premium', amount: 22.99 }] },
   { name: 'Amazon Prime', tiers: [{ tier: 'Monthly', amount: 14.99 }, { tier: 'Annual', amount: 139, cycle: 'yearly' }] },
-  { name: 'YouTube Premium', tiers: [{ tier: 'Student', amount: 7.99 }, { tier: 'Individual', amount: 13.99 }, { tier: 'Family', amount: 22.99 }] },
-  { name: 'Apple Music', tiers: [{ tier: 'Student', amount: 5.99 }, { tier: 'Individual', amount: 10.99 }, { tier: 'Family', amount: 16.99 }] },
-  { name: 'Apple One', tiers: [{ tier: 'Individual', amount: 19.95 }, { tier: 'Family', amount: 25.95 }, { tier: 'Premier', amount: 37.95 }] },
-  { name: 'iCloud+', tiers: [{ tier: '50GB', amount: 0.99 }, { tier: '200GB', amount: 2.99 }, { tier: '2TB', amount: 9.99 }] },
-  { name: 'Google One', tiers: [{ tier: '100GB', amount: 1.99 }, { tier: '200GB', amount: 2.99 }, { tier: '2TB', amount: 9.99 }] },
-  { name: 'Paramount+', tiers: [{ tier: 'Essential', amount: 7.99 }, { tier: 'with Showtime', amount: 12.99 }] },
-  { name: 'Peacock', tiers: [{ tier: 'Premium', amount: 7.99 }, { tier: 'Premium Plus', amount: 13.99 }] },
-  { name: 'Microsoft 365', tiers: [{ tier: 'Personal', amount: 69.99, cycle: 'yearly' }, { tier: 'Family', amount: 99.99, cycle: 'yearly' }] },
-  { name: 'Adobe Creative Cloud', tiers: [{ tier: 'Photography', amount: 9.99 }, { tier: 'All Apps', amount: 59.99 }] },
-  { name: 'ChatGPT Plus', tiers: [{ tier: 'Plus', amount: 20 }, { tier: 'Pro', amount: 200 }] },
-  { name: 'Xbox Game Pass', tiers: [{ tier: 'Core', amount: 9.99 }, { tier: 'Standard', amount: 14.99 }, { tier: 'Ultimate', amount: 19.99 }] },
-  { name: 'PlayStation Plus', tiers: [{ tier: 'Essential', amount: 9.99 }, { tier: 'Extra', amount: 14.99 }, { tier: 'Premium', amount: 17.99 }] },
+  { name: 'YouTube Premium', tiers: [{ tier: 'Student', amount: 8.99 }, { tier: 'Individual', amount: 15.99 }, { tier: 'Family', amount: 26.99 }] },
+  { name: 'Apple Music', tiers: [{ tier: 'Student', amount: 6.99 }, { tier: 'Individual', amount: 11.99 }, { tier: 'Family', amount: 19.99 }] },
+  { name: 'Apple One', tiers: [{ tier: 'Individual', amount: 21.95 }, { tier: 'Family', amount: 27.95 }, { tier: 'Premier', amount: 39.95 }] },
+  { name: 'iCloud+', tiers: [{ tier: '50GB', amount: 0.99 }, { tier: '200GB', amount: 2.99 }, { tier: '2TB', amount: 9.99 }, { tier: '6TB', amount: 29.99 }, { tier: '12TB', amount: 59.99 }] },
+  { name: 'Google One', tiers: [{ tier: 'Basic (100GB)', amount: 1.99 }, { tier: 'Google AI Plus (2TB)', amount: 9.99 }, { tier: 'Google AI Pro (5TB)', amount: 19.99 }] },
+  { name: 'Paramount+', tiers: [{ tier: 'Essential', amount: 8.99 }, { tier: 'Premium', amount: 13.99 }] },
+  { name: 'Peacock', tiers: [{ tier: 'Select', amount: 8.99 }, { tier: 'Premium', amount: 12.99 }, { tier: 'Premium Plus', amount: 19.99 }] },
+  { name: 'Microsoft 365', tiers: [{ tier: 'Personal', amount: 99.99, cycle: 'yearly' }, { tier: 'Family', amount: 129.99, cycle: 'yearly' }, { tier: 'Premium', amount: 199.99, cycle: 'yearly' }] },
+  { name: 'Adobe Creative Cloud', tiers: [{ tier: 'Photography (1TB)', amount: 19.99 }, { tier: 'Standard', amount: 54.99 }, { tier: 'Creative Cloud Pro', amount: 69.99 }] },
+  { name: 'ChatGPT', tiers: [{ tier: 'Go', amount: 8 }, { tier: 'Plus', amount: 20 }, { tier: 'Pro', amount: 200 }] },
+  { name: 'Xbox Game Pass', tiers: [{ tier: 'Essential', amount: 9.99 }, { tier: 'Premium', amount: 14.99 }, { tier: 'Ultimate', amount: 22.99 }, { tier: 'PC Game Pass', amount: 13.99 }] },
+  { name: 'PlayStation Plus', tiers: [{ tier: 'Essential', amount: 10.99 }, { tier: 'Extra', amount: 16.99 }, { tier: 'Premium', amount: 19.99 }] },
   { name: 'Costco', tiers: [{ tier: 'Gold Star', amount: 65, cycle: 'yearly' }, { tier: 'Executive', amount: 130, cycle: 'yearly' }] },
-  { name: 'Planet Fitness', tiers: [{ tier: 'Classic', amount: 15 }, { tier: 'Black Card', amount: 24.99 }] },
+  { name: 'Planet Fitness', tiers: [{ tier: 'Classic', amount: 15 }, { tier: 'PF Black Card', amount: 24.99 }] },
 ];
+
+// Shown under the quick-fill picker.
+export const PRESET_PRICES_NOTE = `Typical US prices as of ${new Date(PRESET_PRICES_AS_OF + 'T00:00:00').toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}. Check your bill and adjust if yours differs.`;
 
 const daysFromToday = (d: string) => Math.round((parseLocalDate(d).getTime() - parseLocalDate(todayStr()).getTime()) / 86400000);
 export const dueClass = (d: string | null) => {
@@ -529,7 +535,7 @@ export function SubscriptionEditor({
               </select>
             </Field>
           </div>
-          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Fills name, tier, price &amp; cycle below — prices are approximate; edit as needed.</div>
+          <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>Fills name, tier, price &amp; cycle below. {PRESET_PRICES_NOTE}</div>
         </div>
       )}
 

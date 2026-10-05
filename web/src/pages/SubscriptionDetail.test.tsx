@@ -574,7 +574,7 @@ describe('SubscriptionDetail new mode', () => {
     await userEvent.selectOptions(screen.getByLabelText('Plan'), 'Family');
     expect(screen.getByLabelText('Name')).toHaveValue('Spotify');
     expect(screen.getByLabelText('Tier / Plan')).toHaveValue('Family');
-    expect(screen.getByLabelText('Amount')).toHaveValue('$19.99');
+    expect(screen.getByLabelText('Amount')).toHaveValue('$21.99');
   });
 
   it('keeps an already-chosen type when picking a service', async () => {

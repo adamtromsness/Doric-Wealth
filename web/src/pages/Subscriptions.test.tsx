@@ -425,10 +425,10 @@ describe('SubscriptionEditor', () => {
     expect(plan).toBeEnabled();
     // Choosing the service also seeds its usual type.
     expect(screen.getByLabelText('Type')).toHaveValue('streaming');
-    await userEvent.selectOptions(plan, 'Premium 4K');
+    await userEvent.selectOptions(plan, 'Premium');
     expect(screen.getByLabelText('Name')).toHaveValue('Netflix');
-    expect(screen.getByLabelText('Tier / Plan')).toHaveValue('Premium 4K');
-    expect(screen.getByLabelText('Amount')).toHaveValue('$24.99');
+    expect(screen.getByLabelText('Tier / Plan')).toHaveValue('Premium');
+    expect(screen.getByLabelText('Amount')).toHaveValue('$26.99');
     expect(screen.getByLabelText('Billing Cycle')).toHaveValue('monthly');
   });
 
@@ -538,5 +538,19 @@ describe('SubscriptionEditor', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose).toHaveBeenCalled();
     expect(api.post).not.toHaveBeenCalled();
+  });
+});
+
+describe('SERVICE_PRESETS', async () => {
+  const { SERVICE_PRESETS, PRESET_TYPE, PRESET_PRICES_NOTE } = await import('./Subscriptions');
+  it('every service has a type and unique, positively priced plans', () => {
+    for (const s of SERVICE_PRESETS) {
+      expect(PRESET_TYPE[s.name], s.name).toBeTruthy();
+      expect(new Set(s.tiers.map((t) => t.tier)).size, s.name).toBe(s.tiers.length);
+      for (const t of s.tiers) expect(t.amount, `${s.name} ${t.tier}`).toBeGreaterThan(0);
+    }
+  });
+  it('says when the prices were checked', () => {
+    expect(PRESET_PRICES_NOTE).toMatch(/^Typical US prices as of October 2026\./);
   });
 });
