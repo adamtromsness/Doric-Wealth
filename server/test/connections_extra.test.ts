@@ -4,9 +4,9 @@ import { startServer, stopServer, registerUser, testDbClient } from './helpers.j
 import { encryptSecret } from '../src/secrets.js';
 import { upsertAccountLinks, markAbsentLinks, syncAllSimplefinLinksSafe, applySimplefinSync } from '../src/routes/connections.js';
 
-// A non-resolving https host: passes the SSRF/https guard but fails to connect fast,
-// so the network-error branches run without a real external call.
-const DEAD_URL = 'https://sync-test.invalid/simplefin';
+// An allowed SimpleFIN host: the test harness blocks real outside requests, so the
+// fetch fails like an unreachable server and the network-error branches run.
+const DEAD_URL = 'https://bridge.simplefin.org/simplefin-unreachable';
 
 let base: string;
 before(async () => { base = await startServer(); });

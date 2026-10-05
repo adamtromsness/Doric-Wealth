@@ -5,23 +5,30 @@
 //   2. fetchAccounts(accessUrl): GET <accessUrl>/accounts → accounts + transactions.
 // SimpleFIN is read-only by design. See https://www.simplefin.org/protocol.html
 import { HttpError } from './http.js';
+import { config } from './config.js';
 
 const TIMEOUT_MS = 20_000;
 
-// The setup/claim URL host comes from a user-supplied setup token, so validate it
-// before we make a server-side request to it: https only, and never a private or
-// loopback address (SSRF guard).
-function assertSafeUrl(raw: string, label: string): URL {
+// The setup/claim URL comes from a user-supplied setup token, so it's validated before
+// the server makes any request with it (SSRF guard): https, the default port, and a
+// host on the SimpleFIN allow-list (config.simplefinHosts). An allow-list rather than a
+// private-address block-list, so IPv6/odd address forms, DNS tricks, and hostile claim
+// responses can't reach anything else. Redirects aren't followed (see sfFetch).
+export function assertSafeUrl(raw: string, label: string): URL {
   let u: URL;
   try { u = new URL(raw); } catch { throw new HttpError(400, `That SimpleFIN ${label} is not a valid URL.`); }
   if (u.protocol !== 'https:') throw new HttpError(400, `SimpleFIN ${label} must use https.`);
-  const h = u.hostname;
-  const privateHost =
-    h === 'localhost' || h === '::1' || h === '0.0.0.0' ||
-    /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h) ||
-    /^169\.254\./.test(h) || /^172\.(1[6-9]|2\d|3[01])\./.test(h);
-  if (privateHost) throw new HttpError(400, 'Refusing to contact a private network address.');
+  if (u.port !== '' || !config.simplefinHosts.includes(u.hostname.toLowerCase())) {
+    throw new HttpError(400, `That SimpleFIN ${label} isn't from a known SimpleFIN server.`);
+  }
   return u;
+}
+
+// fetch that refuses redirects: a redirect could point anywhere, bypassing the host check.
+async function sfFetch(url: string, init: RequestInit): Promise<Response> {
+  const res = await fetch(url, { ...init, redirect: 'manual' });
+  if (res.status >= 300 && res.status < 400) throw new HttpError(502, 'SimpleFIN responded with a redirect, which Doric does not follow.');
+  return res;
 }
 
 // Split basic-auth creds out of a URL into an Authorization header — Node's fetch
@@ -46,8 +53,8 @@ export async function claimAccessUrl(setupToken: string): Promise<string> {
   const u = assertSafeUrl(claimUrl, 'setup token');
 
   let res: Response;
-  try { res = await fetch(u.toString(), { method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS) }); }
-  catch { throw new HttpError(502, 'Could not reach SimpleFIN to set up the connection.'); }
+  try { res = await sfFetch(u.toString(), { method: 'POST', signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+  catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(502, 'Could not reach SimpleFIN to set up the connection.'); }
   if (!res.ok) throw new HttpError(502, `SimpleFIN setup failed (${res.status}). The token may already be used or expired.`);
 
   const accessUrl = (await res.text()).trim();
@@ -102,8 +109,8 @@ export async function fetchAccounts(
 
   const { url, headers } = withBasicAuth(u);
   let res: Response;
-  try { res = await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
-  catch { throw new HttpError(502, 'Could not reach SimpleFIN.'); }
+  try { res = await sfFetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
+  catch (e) { if (e instanceof HttpError) throw e; throw new HttpError(502, 'Could not reach SimpleFIN.'); }
   if (!res.ok) throw new HttpError(502, `SimpleFIN request failed (${res.status}).`);
 
   const data = (await res.json()) as { accounts?: SfAccount[]; errors?: string[] };

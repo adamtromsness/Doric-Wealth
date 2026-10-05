@@ -44,6 +44,11 @@ export const config = {
   // invite-only in production and open otherwise (dev, tests); any other value fails
   // closed to 'invite'.
   signupMode: ((process.env.SIGNUP_MODE ?? (process.env.NODE_ENV === 'production' ? 'invite' : 'open')) === 'open' ? 'open' : 'invite') as 'open' | 'invite',
+  // SimpleFIN servers Doric will contact (setup-token claims and account fetches).
+  // An allow-list, so a crafted setup token can't make the server call anything else.
+  // Comma-separated hostnames; add yours if you use another SimpleFIN provider.
+  simplefinHosts: (process.env.SIMPLEFIN_ALLOWED_HOSTS ?? 'bridge.simplefin.org,beta-bridge.simplefin.org')
+    .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
   // Who pilot users contact about their data (shown on the Privacy page). Optional;
   // without it the page says to contact the person who invited them.
   contactEmail: process.env.CONTACT_EMAIL ?? '',

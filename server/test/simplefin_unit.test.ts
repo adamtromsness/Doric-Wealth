@@ -37,13 +37,43 @@ test('claimAccessUrl rejects a non-https claim URL (SSRF/protocol guard)', async
   );
 });
 
-test('claimAccessUrl rejects a private/loopback host (SSRF guard)', async () => {
+test('claimAccessUrl only contacts allow-listed SimpleFIN hosts (SSRF guard)', async () => {
   stubFetch(() => { throw new Error('should not fetch'); });
-  for (const host of ['https://127.0.0.1/claim', 'https://localhost/claim', 'https://10.0.0.5/claim', 'https://192.168.1.1/claim', 'https://169.254.1.1/claim', 'https://172.16.0.1/claim']) {
+  for (const host of [
+    'https://127.0.0.1/claim', 'https://localhost/claim', 'https://10.0.0.5/claim', 'https://192.168.1.1/claim',
+    'https://169.254.1.1/claim', 'https://172.16.0.1/claim',
+    // IPv6 loopback / unique-local / mapped forms, which a private-address block-list missed.
+    'https://[::1]/claim', 'https://[fc00::1]/claim', 'https://[::ffff:127.0.0.1]/claim',
+    // Any other public host, including look-alikes, and odd ports on a real host.
+    'https://example.com/claim', 'https://bridge.simplefin.org.evil.example/claim', 'https://evil-bridge.simplefin.org/claim',
+    'https://bridge.simplefin.org:8443/claim',
+  ]) {
     await assert.rejects(
       claimAccessUrl(b64(host)),
-      (e: any) => e instanceof HttpError && e.status === 400 && /private network/i.test(e.message)
+      (e: any) => e instanceof HttpError && e.status === 400 && /known SimpleFIN server/.test(e.message),
+      host,
     );
+  }
+});
+
+test('SimpleFIN redirects are refused, not followed', async () => {
+  let calls = 0;
+  stubFetch((_url, init) => { calls++; assert.equal(init?.redirect, 'manual'); return new Response(null, { status: 302, headers: { location: 'https://127.0.0.1/' } }); });
+  await assert.rejects(claimAccessUrl(b64('https://bridge.simplefin.org/claim')), (e: any) => e instanceof HttpError && e.status === 502 && /redirect/.test(e.message));
+  await assert.rejects(fetchAccounts('https://u:p@bridge.simplefin.org/simplefin'), (e: any) => e instanceof HttpError && /redirect/.test(e.message));
+  assert.equal(calls, 2, 'one request each, no follow-up');
+});
+
+test('the allow-list can be changed for another SimpleFIN provider', async () => {
+  const { config } = await import('../src/config.js');
+  const saved = config.simplefinHosts;
+  config.simplefinHosts = ['sf.example.org'];
+  try {
+    stubFetch(() => new Response('https://u:p@sf.example.org/simplefin', { status: 200 }));
+    assert.equal(await claimAccessUrl(b64('https://sf.example.org/claim')), 'https://u:p@sf.example.org/simplefin');
+    await assert.rejects(claimAccessUrl(b64('https://bridge.simplefin.org/claim')), /known SimpleFIN server/);
+  } finally {
+    config.simplefinHosts = saved;
   }
 });
 
