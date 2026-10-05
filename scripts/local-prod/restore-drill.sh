@@ -67,9 +67,18 @@ if [ -t 0 ]; then
   read -rs key || true
   echo
 fi
+# Pasting can bring along spaces at either end; a key never has any.
+key="$(printf '%s' "$key" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+# A short fingerprint and the length tell two keys apart without showing either.
+fp() { printf '%s' "$1" | sha256sum | cut -c1-8; }
 if [ -n "$key" ]; then
   key_source=off-machine
-  [ "$key" = "$(envval APP_SECRET_KEY)" ] || echo "Note: that key differs from the one in $ENV_FILE."
+  server_key="$(envval APP_SECRET_KEY)"
+  if [ "$key" != "$server_key" ]; then
+    echo "Note: that key differs from the one in $ENV_FILE."
+    echo "  pasted:          fingerprint $(fp "$key"), ${#key} characters"
+    echo "  $ENV_FILE: fingerprint $(fp "$server_key"), ${#server_key} characters"
+  fi
 else
   key="$(envval APP_SECRET_KEY)"
 fi
