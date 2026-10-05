@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Router } from 'express';
-import { query, one, withTransaction, withBookContext, pool } from '../db.js';
+import { query, one, withTransaction, withBookContext, pool, BOOK_LOCK } from '../db.js';
 import { ah, HttpError } from '../http.js';
 import { hh, requireManager } from '../tenant.js';
 
@@ -337,6 +337,7 @@ async function previewEnvelope(bookId: number, env: any) {
     replaces: plan.groups.map(groupLabel),
     current_rows: plan.currentRows,
     problems: plan.problems,
+    warnings: plan.warnings,
   };
 }
 
@@ -350,6 +351,7 @@ interface RestorePlan {
   replace: string[];      // every table a restore wipes: all tables of the data sets the snapshot covers
   groups: string[];       // those data sets
   problems: string[];     // reasons the restore can't go ahead (empty = safe)
+  warnings: string[];     // what it will change beyond replacing the data sets (links it drops)
   currentRows: number;    // current records in `replace`
   liveIds: (table: string) => Promise<Set<number>>;
 }
@@ -410,25 +412,56 @@ async function planRestore(bookId: number, env: any): Promise<RestorePlan> {
     problems.push(`Restoring only ${groups.map(groupLabel).join(', ')} would unlink or delete records that point at it (${list}). Restore a full backup instead.`);
   }
 
-  // Required links from the backup's rows to rows outside it that this book lacks.
-  const missing = new Set<string>();
+  // Every link from the backup's rows must resolve: to a row the backup restores, or,
+  // for a data set it doesn't replace, to a row this book still has. A required link
+  // that can't (e.g. a transaction's vehicle tag, restored into a book without that
+  // vehicle) stops the restore; an optional one is dropped, and the preview says so.
+  const snapIds = new Map<string, Set<number>>();
+  const willExist = async (parent: string, v: any): Promise<boolean> => {
+    if (!replaceSet.has(parent)) return (await liveIds(parent)).has(Number(v));
+    let ids = snapIds.get(parent);
+    if (!ids) { ids = new Set((snapshot[parent] ?? []).map((r: any) => Number(r.id))); snapIds.set(parent, ids); }
+    return ids.has(Number(v));
+  };
+  const required = new Map<string, number>();  // parent data set → records that need it
+  const dropped = new Map<string, number>();   // parent data set → links that will be removed
+  const unresolved = (into: Map<string, number>, parent: string | null) => {
+    const k = parent ? groupLabel(groupOf(parent)) : 'an unknown kind of record';
+    into.set(k, (into.get(k) ?? 0) + 1);
+  };
   for (const t of snapTables) {
     const rows = snapshot[t];
-    if (!rows.length) continue;
-    for (const e of edges) {
-      if (e.child !== t || replaceSet.has(e.parent) || !meta[t].notNull.has(e.column!)) continue;
-      const ids = await liveIds(e.parent);
-      if (rows.some((r) => r[e.column!] != null && !ids.has(Number(r[e.column!])))) missing.add(groupLabel(groupOf(e.parent)));
+    if (!rows.length || !meta[t]) continue;
+    const links = edges.filter((e) => e.child === t).map((e) => ({ column: e.column!, parent: (_r: any) => e.parent as string | null }));
+    const poly = POLY_REFS.find((p) => p.table === t);
+    if (poly) links.push({ column: poly.column, parent: (r: any) => polyParent(poly, r) });
+    for (const l of links) {
+      const req = meta[t].notNull.has(l.column);
+      for (const r of rows) {
+        const v = r[l.column];
+        if (v == null) continue;
+        const parent = l.parent(r);
+        if (parent && meta[parent] && await willExist(parent, v)) continue;
+        unresolved(req ? required : dropped, parent);
+      }
     }
   }
-  if (missing.size) {
-    problems.push(`This selective restore depends on data sets that aren't in the backup: ${[...missing].join(', ')}. Include those data sets, or restore a full backup.`);
+  const tally = (m: Map<string, number>) => [...m].map(([g, n]) => `${g} (${n.toLocaleString('en-US')})`).join(', ');
+  if (required.size) {
+    problems.push(`This restore depends on data sets that aren't in the backup or this book: ${tally(required)}. Include those data sets, or restore a full backup.`);
+  }
+  const warnings: string[] = [];
+  if (dropped.size) {
+    warnings.push(`Links to records that aren't in the backup or this book will be removed: ${tally(dropped)}.`);
   }
 
   let currentRows = 0;
   for (const t of replace) currentRows += (await one<{ c: number }>(`SELECT count(*)::int AS c FROM "${t}" WHERE book_id = $1`, [bookId]))!.c;
-  return { snapTables, replace, groups, problems, currentRows, liveIds };
+  return { snapTables, replace, groups, problems, warnings, currentRows, liveIds };
 }
+
+// Tests only: runs inside a restore once its locks are held.
+export const restoreTestHooks: { afterLock?: () => Promise<void> } = {};
 
 // REPLACE the active book's data with the snapshot envelope. Destructive:
 // deletes the data sets the snapshot covers and loads the snapshot in a single
@@ -448,6 +481,21 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
   let inserted = 0;
   let loaded = 0;
   await withTransaction(async (client) => {
+    // Hold off all other work on this book until this restore commits (see BOOK_LOCK),
+    // so nothing can appear between the safety checks below and the replace (e.g. a
+    // new transaction pointing at an account about to be replaced). This request's
+    // own shared hold is dropped first. Gives up after 10s rather than queue behind a
+    // long-running request.
+    await client.query(`SET LOCAL lock_timeout = '10s'`);
+    try {
+      await client.query(`SELECT pg_advisory_unlock_shared(${BOOK_LOCK}, $1)`, [bookId]);
+      await client.query(`SELECT pg_advisory_xact_lock(${BOOK_LOCK}, $1)`, [bookId]);
+    } catch (e: any) {
+      if (e?.code === '55P03') throw new HttpError(409, 'Doric is busy with other changes to this book. Try the restore again in a minute.');
+      throw e;
+    }
+    await client.query(`SET LOCAL lock_timeout = 0`);
+    await restoreTestHooks.afterLock?.();
     const plan = await planRestore(bookId, env);
     if (plan.problems.length) throw new HttpError(400, plan.problems.join(' '));
     const replaceSet = new Set(plan.replace);
@@ -484,13 +532,11 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
       const selfRefUpdates: { newId: number; pending: { col: string; oldVal: number }[] }[] = [];
 
       // Prepare every row's insert columns + values up front, then write them in
-      // chunked multi-row INSERTs. A row whose required reference can't be resolved
-      // (only possible in a damaged or hand-edited file) is skipped.
+      // chunked multi-row INSERTs.
       type Prepared = { cols: string[]; vals: any[]; oldId: number | null; pending: { col: string; oldVal: number }[]; deferred: { parent: string; oldVal: number } | null };
       const prepared: Prepared[] = [];
       for (const row of rows) {
         const insCols: string[] = []; const vals: any[] = [];
-        let skip = false;
         let deferred: Prepared['deferred'] = null;
         for (const c of m.columns) {
           if (c === 'id') continue; // always let the DB assign a fresh primary key
@@ -503,12 +549,13 @@ async function restoreEnvelope(bookId: number, env: any): Promise<{ restored_row
             if (poly.deferred) { if (parent) deferred = { parent, oldVal: Number(v) }; v = null; }
             else v = parent ? await resolve(parent, v) : null;
           }
-          if (v == null && row[c] != null && m.notNull.has(c)) { skip = true; break; }
+          // planRestore refuses unresolvable required links, so this can't happen;
+          // if it does, fail the whole restore (rolled back) rather than lose the row.
+          if (v == null && row[c] != null && m.notNull.has(c)) throw new HttpError(400, `A ${t.replace(/_/g, ' ')} record in the backup links to a record that can't be restored. Nothing was changed.`);
           if (v != null && m.bytea.has(c)) v = Buffer.from(String(v), 'base64');
           if (v != null && m.jsonb.has(c) && typeof v === 'object') v = JSON.stringify(v);
           insCols.push(c); vals.push(v);
         }
-        if (skip) continue;
         const pending: { col: string; oldVal: number }[] = [];
         if (m.selfRef.size) for (const c of m.selfRef) if (c in row && row[c] != null && colSet.has(c)) pending.push({ col: c, oldVal: Number(row[c]) });
         prepared.push({ cols: insCols, vals, oldId: row.id != null ? Number(row.id) : null, pending, deferred });

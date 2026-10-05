@@ -1,7 +1,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer, stopServer, registerUser, testDbClient } from './helpers.js';
-import { runDueBackupsSafe } from '../src/routes/backup.js';
+import { runDueBackupsSafe, restoreTestHooks } from '../src/routes/backup.js';
 
 let base: string;
 before(async () => { base = await startServer(); });
@@ -93,6 +93,10 @@ test('selective restore keeps links to rows this book still has, and drops links
   const theirs = (await other.client.get('/api/transactions')).body.posted;
   assert.equal(theirs.length, 1);
   assert.equal(theirs[0].account_id, null, 'an unresolvable link is dropped, never pointed at another book');
+  // The preview said so beforehand.
+  const pv = (await other.client.post('/api/backup/preview', env)).body;
+  assert.deepEqual(pv.problems, []);
+  assert.match(pv.warnings.join(' '), /will be removed: Accounts & balances \(1\)/);
 });
 
 test('a selective restore that would unlink or delete data outside it is refused, with an accurate preview', async () => {
@@ -271,4 +275,74 @@ test('schedule: defaults, saving, validation, and the due-backup sweep', async (
   // Clean up so this book's enabled schedule doesn't linger in the shared DB.
   await client.post('/api/backup/schedule', { enabled: false });
   void bookId;
+});
+
+test('a required link the restore can\'t resolve stops it (never a silently missing record)', async () => {
+  // Codex's case: a transactions-only backup with a vehicle tag, restored into a book
+  // without that vehicle. The tag's vehicle link is required, so the restore refuses.
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const veh = (await client.post('/api/vehicles', { name: 'Car' })).body.id;
+  await client.post('/api/transactions', { amount: 30, account_id: acct, direction: 'expense', txn_date: '2026-06-01', tags: [{ kind: 'vehicle', ref_id: veh }] });
+  const env = (await client.get('/api/backup/export?groups=transactions')).body;
+
+  const other = await registerUser(base);
+  await other.client.post('/api/transactions', { amount: 1, direction: 'expense', txn_date: '2026-06-01', merchant: 'Keep Me' });
+  const pv = (await other.client.post('/api/backup/preview', env)).body;
+  assert.match(pv.problems.join(' '), /depends on data sets that aren't in the backup or this book: Vehicles \(1\)/);
+  const imp = await other.client.post('/api/backup/import', { ...env, confirm: 'REPLACE' });
+  assert.equal(imp.status, 400);
+  assert.match(imp.body.error, /Vehicles/);
+  const txns = (await other.client.get('/api/transactions')).body.posted;
+  assert.deepEqual(txns.map((t: any) => t.merchant), ['Keep Me'], 'nothing changed');
+
+  // In its own book the vehicle exists, so the tag survives.
+  assert.equal((await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' })).status, 200);
+  const db = testDbClient();
+  await db.connect();
+  try {
+    const tags = (await db.query(`SELECT kind, ref_id FROM line_tags WHERE book_id = $1`, [bookId])).rows;
+    assert.deepEqual(tags, [{ kind: 'vehicle', ref_id: veh }]);
+  } finally {
+    await db.end();
+  }
+});
+
+test('a write that arrives during a restore waits for it, and can\'t slip past the safety check', async () => {
+  // Codex's case: a transaction added to an account between the restore's check and
+  // its replace of Accounts. The restore now holds the book's other work off from
+  // before its check until it commits.
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const env = (await client.get('/api/backup/export?groups=accounts')).body;
+  const other = await registerUser(base);
+
+  let write: Promise<any> | null = null;
+  let finished = false;
+  try {
+    restoreTestHooks.afterLock = async () => {
+      write = client.post('/api/transactions', { amount: 5, account_id: acct, direction: 'expense', txn_date: '2026-06-01' })
+        .then((r: any) => { finished = true; return r; });
+      await new Promise((r) => setTimeout(r, 400));
+      assert.equal(finished, false, 'a write to this book waits while the restore runs');
+      // Other books carry on.
+      assert.equal((await other.client.post('/api/accounts', { name: 'Elsewhere', type: 'checking' })).status, 201);
+    };
+    const imp = await client.post('/api/backup/import', { ...env, confirm: 'REPLACE' });
+    assert.equal(imp.status, 200);
+    // Once the restore commits, the write goes ahead and finds its account replaced,
+    // instead of leaving a transaction with no account.
+    const r = await write!;
+    assert.ok(r.status >= 400 && r.status < 500, `the late write is refused (got ${r.status})`);
+  } finally {
+    restoreTestHooks.afterLock = undefined;
+  }
+  const db = testDbClient();
+  await db.connect();
+  try {
+    const orphans = (await db.query(`SELECT count(*)::int AS c FROM transactions WHERE book_id = $1 AND account_id IS NULL`, [bookId])).rows[0].c;
+    assert.equal(orphans, 0);
+  } finally {
+    await db.end();
+  }
 });

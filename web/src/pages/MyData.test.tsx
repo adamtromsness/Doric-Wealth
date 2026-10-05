@@ -258,7 +258,7 @@ describe('MyData — snapshots tab', () => {
         book: { id: 1, name: 'Home' }, exported_at: '2026-03-01T10:00:00Z',
         schema_version: 3, schema_mismatch: false, total_rows: 42,
         counts: { transactions: 40, accounts: 2 },
-        replaces: ['Accounts & balances', 'Transactions'], current_rows: 37, problems: [],
+        replaces: ['Accounts & balances', 'Transactions'], current_rows: 37, problems: [], warnings: [],
       };
       (api.post as any).mockImplementation((path: string) => {
         if (path === '/backup/snapshots/1/preview') return Promise.resolve(preview);
@@ -287,7 +287,7 @@ describe('MyData — snapshots tab', () => {
     it('warns on a schema mismatch and can cancel', async () => {
       const preview = {
         book: null, exported_at: null, schema_version: 1, schema_mismatch: true,
-        total_rows: 5, counts: {}, replaces: ['Accounts & balances'], current_rows: 0, problems: [],
+        total_rows: 5, counts: {}, replaces: ['Accounts & balances'], current_rows: 0, problems: [], warnings: [],
       };
       (api.post as any).mockImplementation((path: string) =>
         path === '/backup/snapshots/1/preview' ? Promise.resolve(preview) : Promise.resolve({}));
@@ -301,7 +301,7 @@ describe('MyData — snapshots tab', () => {
     });
 
     it('aborts the restore if the safety snapshot download fails', async () => {
-      const preview = { book: null, exported_at: null, schema_version: 1, schema_mismatch: false, total_rows: 1, counts: {}, replaces: ['Accounts & balances'], current_rows: 1, problems: [] };
+      const preview = { book: null, exported_at: null, schema_version: 1, schema_mismatch: false, total_rows: 1, counts: {}, replaces: ['Accounts & balances'], current_rows: 1, problems: [], warnings: [] };
       (api.post as any).mockImplementation((path: string) =>
         path === '/backup/snapshots/1/preview' ? Promise.resolve(preview) : Promise.resolve({}));
       (apiDownload as any).mockRejectedValue(new Error('disk full'));
@@ -321,6 +321,7 @@ describe('MyData — snapshots tab', () => {
         book: null, exported_at: null, schema_version: 1, schema_mismatch: false, total_rows: 2, counts: {},
         replaces: ['Accounts & balances'], current_rows: 3,
         problems: ['Restoring only Accounts & balances would unlink or delete records that point at it (5 in Transactions). Restore a full backup instead.'],
+        warnings: ['Links to records that aren\'t in the backup or this book will be removed: Categories (2).'],
       };
       (api.post as any).mockImplementation((path: string) =>
         path === '/backup/snapshots/1/preview' ? Promise.resolve(preview) : Promise.resolve({}));
@@ -329,6 +330,7 @@ describe('MyData — snapshots tab', () => {
       await goSnapshots(user);
       await user.click(screen.getByRole('button', { name: 'Restore' }));
       expect(await screen.findByRole('alert')).toHaveTextContent(/5 in Transactions/);
+      expect(screen.getByText(/will be removed: Categories \(2\)/)).toBeInTheDocument();
       await user.type(screen.getByPlaceholderText('REPLACE'), 'REPLACE');
       expect(screen.getByRole('button', { name: 'Replace Data' })).toBeDisabled();
     });

@@ -75,6 +75,7 @@ interface Preview {
   replaces: string[];
   current_rows: number;
   problems: string[];
+  warnings: string[];
 }
 
 export default function MyData() {
@@ -501,6 +502,11 @@ export default function MyData() {
             <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
               This replaces <strong>{preview.replaces.join(', ')}</strong>: the {preview.current_rows.toLocaleString()} records in {preview.replaces.length === 1 ? 'it' : 'them'} now are removed and the snapshot's records are loaded. A <strong>pre-restore safety snapshot</strong> downloads to your computer right before the replace.
             </div>
+            {preview.warnings.length > 0 && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 8, color: 'var(--warn, #b8860b)' }}>
+                {preview.warnings.map((w) => <div key={w}>⚠ {w}</div>)}
+              </div>
+            )}
             {preview.problems.length > 0 && (
               <div className="error" role="alert" style={{ marginTop: 10 }}>
                 {preview.problems.map((p) => <div key={p}>{p}</div>)}

@@ -3,7 +3,7 @@
 // gate routes. Tenant-scoped routes read `hh(req)` and add `book_id = $n` to
 // every query (see routes/accounts.ts for the canonical pattern).
 import type { Request, Response, NextFunction } from 'express';
-import { one, query, pool, requestStore, type RequestBinding } from './db.js';
+import { one, query, pool, requestStore, BOOK_LOCK, type RequestBinding } from './db.js';
 import { HttpError } from './http.js';
 import { SESSION_COOKIE, readCookie, hashToken } from './auth.js';
 
@@ -86,13 +86,15 @@ export function tenantDb(req: Request, res: Response, next: NextFunction) {
         if (binding.released) return;
         binding.released = true;
         if (aborted) { client.release(true); return; }
-        client.query('RESET ALL').then(() => client.release(), (e) => client.release(e));
+        client.query('SELECT pg_advisory_unlock_all()')
+          .then(() => client.query('RESET ALL'))
+          .then(() => client.release(), (e) => client.release(e));
       };
       res.on('finish', () => release(false));
       res.on('close', () => release(!res.writableFinished));
       client.query(
-        `SELECT set_config('app.book_id', $1, false), set_config('app.user_id', $2, false)`,
-        [String(req.book!.id), String(req.user?.id ?? '')]
+        `SELECT set_config('app.book_id', $1, false), set_config('app.user_id', $2, false), pg_advisory_lock_shared(${BOOK_LOCK}, $3)`,
+        [String(req.book!.id), String(req.user?.id ?? ''), req.book!.id]
       )
         .then(() => requestStore.run(binding, () => next()))
         .catch((e) => { release(true); next(e); });

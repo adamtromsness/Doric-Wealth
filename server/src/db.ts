@@ -148,12 +148,18 @@ export async function withTransaction<T>(fn: (client: pg.PoolClient) => Promise<
 // this connection automatically. Without this, job queries run on the shared pool
 // with no tenant context, and under the production (non-superuser) role RLS hides
 // every tenant row: reads come back empty and nothing fails loudly.
+// Per-book advisory lock (class BOOK_LOCK, id = book id). Everything that works on a
+// book's data (requests, background jobs) holds it shared; a restore takes it
+// exclusively, so it waits for work in flight and holds off new work on that book
+// until it commits. Taken first, before any other lock, so it can't deadlock with them.
+export const BOOK_LOCK = 4242;
+
 export async function withBookContext<T>(bookId: number, fn: (client: pg.PoolClient) => Promise<T>, opts: TxOptions = {}): Promise<T> {
   const client = await pool.connect();
   try {
     await client.query(beginSql(opts));
     try {
-      await client.query(`SELECT set_config('app.book_id', $1, true)`, [String(bookId)]);
+      await client.query(`SELECT set_config('app.book_id', $1, true), pg_advisory_xact_lock_shared(${BOOK_LOCK}, $2)`, [String(bookId), bookId]);
       const result = await requestStore.run({ client, inTransaction: true }, () => fn(client));
       await client.query('COMMIT');
       return result;
