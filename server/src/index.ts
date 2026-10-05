@@ -37,6 +37,7 @@ import { dashboard } from './routes/dashboard.js';
 import { connections, syncAllSimplefinLinksSafe } from './routes/connections.js';
 import { runDueBackupsSafe } from './routes/backup.js';
 import { encryptLegacyAiKeys } from './ai/aiKeys.js';
+import { ensureKeyCheck } from './keyCheck.js';
 import { integrations } from './routes/integrations.js';
 import { receiptItems } from './routes/receiptItems.js';
 import { todos } from './routes/todos.js';
@@ -170,6 +171,10 @@ if (fs.existsSync(webDist)) {
 
 // Centralized error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // The client went away before the response (e.g. it navigated on): its database
+  // connection was discarded mid-query (see tenantDb), so this error is expected, and
+  // there's no one to answer.
+  if (res.destroyed || res.writableEnded) return;
   // SQLSTATE DR409: a database guard refused a change with a message written for the
   // user (e.g. editing a reconciled transaction; see migration 129).
   if (err?.code === 'DR409') {
@@ -199,6 +204,10 @@ if (process.env.SERVER_NO_LISTEN !== '1') {
     // Encrypt any personal AI keys stored before at-rest encryption.
     const n = await encryptLegacyAiKeys();
     if (n) console.log(`Encrypted ${n} stored personal AI key(s).`);
+    // Prove APP_SECRET_KEY still matches this database's secrets (see keyCheck.ts).
+    if (await ensureKeyCheck(pool) === 'mismatch') {
+      console.error('APP_SECRET_KEY does not decrypt this database\'s stored secrets: bank connections and saved API keys won\'t work. Restore the original key (keep a copy outside the server). If you changed it on purpose, run node dist/keyCheck.js --reset.');
+    }
   } catch (e: any) {
     console.error(e?.message ?? e);
     process.exit(1);

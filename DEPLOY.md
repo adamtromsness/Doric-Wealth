@@ -168,5 +168,29 @@ backup dump to an S3-compatible bucket every hour and deletes copies older than
 `BACKUP_KEEP_DAYS`. `scripts/local-prod/deploy.sh` starts it when `OFFSITE_BUCKET` is set
 in `.env.production` (see `.env.production.example`). For OCI Object Storage, use its
 S3-compatible endpoint (`https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`)
-with a "Customer Secret Key" as the access key pair. Restore drill: download a dump from
-the bucket and `pg_restore` it into a scratch database, as `deploy.sh` rehearsals do.
+with a "Customer Secret Key" as the access key pair.
+
+## Release gate (self-hosted stack)
+
+Every production change goes CHANGELOG → `scripts/release.sh` → `backup-now.sh` →
+`deploy.sh`, and each step checks the one before:
+
+- **`scripts/release.sh`** runs `scripts/check.sh` before tagging: all server tests with
+  the coverage gate, the server tests again as a restricted database role (row-level
+  security enforced, as in production), the web tests with their coverage gate and a
+  production build, and a browser smoke test (`e2e/smoke.mjs`) that signs up on a
+  throwaway app and database, uses the main pages, and checks that a stale tab can't
+  write into another book. It records the pass in the release commit and tag. One-time
+  setup for the browser: `e2e/setup.sh`.
+- **`scripts/local-prod/restore-drill.sh`** (at least every 30 days): downloads the
+  newest backup from the bucket (or the local folder when no bucket is set), restores it
+  into a scratch database, and checks that the `APP_SECRET_KEY` you keep off this machine
+  (it asks you to paste it) decrypts its stored secrets (`node dist/keyCheck.js`). Without
+  that key, bank connections and saved API keys in a restored backup can't be read, so
+  keep a copy in a password manager.
+- **`scripts/local-prod/deploy.sh`** refuses a tag without the recorded checks
+  (`ALLOW_UNCHECKED=1` overrides), and a missing or older-than-30-days drill, or a
+  local-folder drill when a bucket is set (`SKIP_RESTORE_DRILL=1` overrides, e.g. the
+  first deploy that includes the drill, since the drill needs that image). After the app
+  is up it runs `e2e/smoke.mjs --url http://localhost:4100`, a read-only browser check
+  that makes no changes to data.

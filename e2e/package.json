@@ -1,0 +1,9 @@
+{
+  "name": "doric-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser smoke test for release checks (see smoke.mjs)",
+  "dependencies": {
+    "playwright-core": "1.63.0"
+  }
+}
