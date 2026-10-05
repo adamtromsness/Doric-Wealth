@@ -24,6 +24,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ### Fixed
 - **Bank balances from SimpleFIN** are now dated to when your bank measured them, in your time zone, instead of when Doric synced. Before, transactions that posted between those two times could be left out of the account balance.
+- **Reconciliations:** a completed reconciliation now also locks the principal portion of loan payments in it (their split lines), and the account's liability setting and opening balance, until it's reopened. Before, editing a payment's split could change a reconciled loan balance.
+- **Reconciliations:** completing one now rechecks every cleared transaction: it must still be posted, by the statement end date, in that account, and not already reconciled in another completed reconciliation for the account, including one completed at the same moment.
 - **Utility bills:** linking an existing transaction as a bill's payment now counts only what that transaction actually paid, can't reuse the same payment across bills beyond its amount, and only accepts expenses.
 - **Utility bills:** marking a bill paid now records the payment as posted on the paid date, so the account balance reflects it. Before, the payment sat in Pending.
 

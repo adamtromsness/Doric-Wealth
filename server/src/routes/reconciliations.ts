@@ -69,6 +69,44 @@ async function withSummary(session: any) {
   return { ...session, ...(await summarize(runQuery, session)) };
 }
 
+// Before completing, recheck every cleared item under locks: items were checked when
+// they were cleared, but things change while a session is open. Locking the account
+// row serializes completions for the account, so two sessions can't both complete
+// with the same transaction; locking the cleared transactions holds their amounts,
+// dates, and splits (the split guard locks them too) until this one commits.
+async function assertClearedStillEligible(client: any, session: any) {
+  await client.query(`SELECT id FROM accounts WHERE id = $1 AND book_id = $2 FOR NO KEY UPDATE`, [session.account_id, session.book_id]);
+  await client.query(
+    `SELECT t.id FROM reconciliation_items ri JOIN transactions t ON t.id = ri.transaction_id AND t.book_id = ri.book_id
+      WHERE ri.session_id = $1 AND ri.book_id = $2 AND ri.cleared FOR NO KEY UPDATE OF t`,
+    [session.id, session.book_id]
+  );
+  const bad = (await client.query(
+    `SELECT t.id,
+            CASE
+              WHEN t.account_id IS DISTINCT FROM $3 AND t.transfer_account_id IS DISTINCT FROM $3 THEN 'account'
+              WHEN t.posted_date IS NULL THEN 'pending'
+              WHEN t.posted_date > (SELECT statement_end FROM reconciliation_sessions WHERE id = $1) THEN 'after'
+              WHEN EXISTS (
+                SELECT 1 FROM reconciliation_items o JOIN reconciliation_sessions os ON os.id = o.session_id
+                 WHERE o.transaction_id = t.id AND o.book_id = t.book_id AND o.cleared AND os.status = 'completed'
+                   AND os.account_id = $3 AND os.id <> $1) THEN 'elsewhere'
+            END AS reason
+       FROM reconciliation_items ri JOIN transactions t ON t.id = ri.transaction_id AND t.book_id = ri.book_id
+      WHERE ri.session_id = $1 AND ri.book_id = $2 AND ri.cleared`,
+    [session.id, session.book_id, session.account_id]
+  )).rows.filter((r: any) => r.reason);
+  if (!bad.length) return;
+  const n = (reason: string) => bad.filter((r: any) => r.reason === reason).length;
+  const parts = [
+    n('elsewhere') && `${n('elsewhere')} already cleared in another completed reconciliation for this account`,
+    n('after') && `${n('after')} posted after the statement end date`,
+    n('pending') && `${n('pending')} no longer posted`,
+    n('account') && `${n('account')} no longer in this account`,
+  ].filter(Boolean);
+  throw new HttpError(409, `Some cleared transactions can't be part of this reconciliation: ${parts.join('; ')}. Unclear them and try again.`);
+}
+
 async function logEvent(client: any, session: any, action: string, userId: number | null, detail: any = null) {
   await client.query(
     `INSERT INTO reconciliation_events (book_id, session_id, action, user_id, detail) VALUES ($1,$2,$3,$4,$5)`,
@@ -188,6 +226,7 @@ reconciliations.put(
         if (s.statement_end == null || s.statement_balance == null) {
           throw new HttpError(400, 'Enter the statement end date and ending balance before completing.');
         }
+        await assertClearedStillEligible(client, s);
         const run = async (sql: string, params: any[]) => (await client.query(sql, params)).rows;
         const { cleared_balance, difference } = await summarize(run, s);
         if (Math.abs(difference!) >= 0.005) {
