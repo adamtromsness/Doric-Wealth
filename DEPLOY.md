@@ -138,3 +138,13 @@ curl -fsS https://app.example.com/api/ready          # {"ok":true}
 
 Re-build & push (`:latest` or an immutable tag), update the service, and run the
 migration task again. Sessions survive deploys (stored in the DB).
+
+## Off-machine backup copies (self-hosted stack)
+
+`docker-compose.prod.yml` has an optional `offsite` service (rclone) that copies each
+backup dump to an S3-compatible bucket every hour and deletes copies older than
+`BACKUP_KEEP_DAYS`. `scripts/local-prod/deploy.sh` starts it when `OFFSITE_BUCKET` is set
+in `.env.production` (see `.env.production.example`). For OCI Object Storage, use its
+S3-compatible endpoint (`https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`)
+with a "Customer Secret Key" as the access key pair. Restore drill: download a dump from
+the bucket and `pg_restore` it into a scratch database, as `deploy.sh` rehearsals do.

@@ -15,6 +15,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 ## [Unreleased]
 
 ### Added
+- **Off-machine backup copies:** the server can copy every backup to an S3-compatible storage bucket (such as Oracle Cloud Object Storage) each hour, keeping the same 30 days of history, so a lost server doesn't mean lost data.
 - **Privacy** page in plain language: what Doric stores, who can see it, and when data leaves Doric (AI features send data to Anthropic; bank links use SimpleFIN; property estimates use RentCast). It's linked from sign-in, sign-up and the user menu, and the AI settings page now says what AI features send.
 - **Forgot password?** on the sign-in page. When email is set up, it sends a reset link that works once, for 60 minutes. Until then, it tells you to ask the person who runs Doric, who can create a one-time link for you. Resetting your password signs you out on every device.
 

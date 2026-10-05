@@ -105,5 +105,43 @@ services:
           sleep 900
         done
 
+  # Off-machine copies of the backups, to any S3-compatible bucket (OCI Object Storage's
+  # S3 API, Amazon S3, Backblaze B2, MinIO, …). Optional: started only with the
+  # "offsite" profile (deploy.sh adds it when OFFSITE_BUCKET is set). Every hour it
+  # copies new dumps from BACKUP_DIR to OFFSITE_BUCKET/OFFSITE_PREFIX and deletes copies
+  # older than BACKUP_KEEP_DAYS, so the bucket mirrors the local retention.
+  offsite:
+    image: rclone/rclone:1.71
+    container_name: doric_local_offsite
+    restart: unless-stopped
+    profiles: ["offsite"]
+    environment:
+      RCLONE_CONFIG_OFFSITE_TYPE: s3
+      RCLONE_CONFIG_OFFSITE_PROVIDER: ${OFFSITE_PROVIDER:-Other}
+      RCLONE_CONFIG_OFFSITE_ENDPOINT: ${OFFSITE_ENDPOINT:-}
+      RCLONE_CONFIG_OFFSITE_REGION: ${OFFSITE_REGION:-}
+      RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID: ${OFFSITE_ACCESS_KEY_ID:-}
+      RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY: ${OFFSITE_SECRET_ACCESS_KEY:-}
+      RCLONE_CONFIG_OFFSITE_FORCE_PATH_STYLE: "true"
+      RCLONE_CONFIG_OFFSITE_NO_CHECK_BUCKET: "true"
+      DEST: offsite:${OFFSITE_BUCKET:-unset}/${OFFSITE_PREFIX:-doric}
+      KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+    volumes:
+      - ${BACKUP_DIR:?set BACKUP_DIR in .env.production}:/backups:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "$$(date -u +%FT%TZ) offsite copier started: /backups -> $$DEST (every hour)"
+        while true; do
+          # --min-age skips a dump still being written; --max-age skips ones past retention.
+          if rclone copy /backups "$$DEST" --include 'doric-*.dump' --min-age 2m --max-age "$${KEEP_DAYS}d" --no-traverse --log-level NOTICE; then
+            echo "$$(date -u +%FT%TZ) offsite copy ok ($$(rclone lsf "$$DEST" --include 'doric-*.dump' | wc -l) dumps in the bucket)"
+            rclone delete "$$DEST" --include 'doric-*.dump' --min-age "$${KEEP_DAYS}d" --log-level NOTICE || true
+          else
+            echo "$$(date -u +%FT%TZ) offsite copy FAILED; retrying in 1 hour" >&2
+          fi
+          sleep 3600
+        done
+
 volumes:
   doric_local_pgdata:

@@ -26,6 +26,8 @@ dc run --rm --no-deps app node dist/migrate.js
 # Re-grant after migrations so new tables are covered (DEPLOY.md step 4b).
 dc run --rm --no-deps app node dist/setupDbRole.js
 dc up -d app backup
+# Off-machine backup copies, when a bucket is configured (see the offsite service).
+if grep -qE '^OFFSITE_BUCKET=.+' "$ENV_FILE"; then dc --profile offsite up -d offsite; fi
 
 for _ in $(seq 1 30); do
   if curl -fsS http://localhost:4100/api/ready >/dev/null 2>&1; then
