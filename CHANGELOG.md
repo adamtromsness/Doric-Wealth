@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Changed
+- **Restore drill:** a pasted `APP_SECRET_KEY` is trimmed of stray spaces, and when it doesn't match the server's key, the drill shows a short fingerprint and the length of each (never the key itself) so you can tell which copy is out of date.
+
 ## [1.9.0] - 2026-10-05
 
 ### Added
