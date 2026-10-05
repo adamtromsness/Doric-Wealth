@@ -6,9 +6,9 @@ import { AuthProvider, useAuth, displayName } from './auth';
 // Mock the api module the provider depends on.
 vi.mock('./api', () => {
   const api = { get: vi.fn(), post: vi.fn(), put: vi.fn() };
-  return { api, setUnauthorizedHandler: vi.fn() };
+  return { api, setUnauthorizedHandler: vi.fn(), setExpectedBook: vi.fn(), setBookChangedHandler: vi.fn() };
 });
-import { api, setUnauthorizedHandler } from './api';
+import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler } from './api';
 
 const meFixture = {
   user: { id: 1, email: 'a@b.com', name: 'Ada', timezone: 'America/New_York' },
@@ -55,6 +55,17 @@ describe('AuthProvider', () => {
     expect(screen.getByTestId('active')).toHaveTextContent('Home');
     expect(setUnauthorizedHandler).toHaveBeenCalled();
     expect(api.get).toHaveBeenCalledWith('/auth/me');
+  });
+
+  it('tells the API layer which book this tab shows, and refreshes when another tab switched', async () => {
+    (api.get as any).mockResolvedValue(meFixture);
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await waitFor(() => expect(setExpectedBook).toHaveBeenCalledWith(meFixture.activeBook.id));
+    const handler = (setBookChangedHandler as any).mock.calls[0][0];
+    (api.get as any).mockResolvedValue({ ...meFixture, activeBook: { id: 2, name: 'Cabin', role: 'owner' } });
+    handler();
+    await waitFor(() => expect(screen.getByTestId('active')).toHaveTextContent('Cabin'));
+    expect(setExpectedBook).toHaveBeenLastCalledWith(2);
   });
 
   it('falls back to anonymous when /auth/me fails', async () => {

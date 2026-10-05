@@ -133,3 +133,25 @@ describe('membershipRole + book switching', () => {
     assert.equal(r.status, 200);
   });
 });
+
+describe('X-Book-Id: a tab showing a different book than the active one', () => {
+  it('is refused with code book_changed, so nothing is read from or written to the other book', async () => {
+    const base = await startServer();
+    const { client, bookId: first } = await registerUser(base, { book_name: 'First' });
+    const second = (await client.post('/api/books', { name: 'Second' })).body;
+    const secondId = (second.books ?? []).find((b: any) => b.name === 'Second')?.id ?? second.id;
+    // "Another tab" switches to Second.
+    assert.equal((await client.post('/api/books/switch', { book_id: secondId }, { 'x-book-id': String(first) })).status, 200, 'switching is allowed');
+    // This tab still thinks it's on First.
+    const write = await client.post('/api/accounts', { name: 'Stale', type: 'checking' }, { 'x-book-id': String(first) });
+    assert.equal(write.status, 409);
+    assert.equal(write.body.code, 'book_changed');
+    assert.match(write.body.error, /changed in another tab.*Second/);
+    assert.equal((await client.get('/api/accounts', { 'x-book-id': String(first) })).status, 409, 'reads too');
+    // Nothing was created in either book.
+    assert.ok(!(await client.get('/api/accounts')).body.some((a: any) => a.name === 'Stale'));
+    // With the right book, or no header, requests work; auth endpoints are unaffected.
+    assert.equal((await client.post('/api/accounts', { name: 'Fresh', type: 'checking' }, { 'x-book-id': String(secondId) })).status, 201);
+    assert.equal((await client.get('/api/auth/me', { 'x-book-id': String(first) })).status, 200);
+  });
+});

@@ -101,6 +101,19 @@ export function tenantDb(req: Request, res: Response, next: NextFunction) {
   );
 }
 
+// The active book lives on the session, which every tab shares, so a tab can be showing
+// one book after another tab switched to a different one. The web app sends the book
+// it is showing as X-Book-Id; if that's no longer the active book, refuse (409,
+// code "book_changed") instead of reading or writing the other book. The client then
+// refreshes to the current book. Requests without the header (other clients) pass.
+export function expectedBook(req: Request, _res: Response, next: NextFunction) {
+  const header = req.get('x-book-id');
+  if (!header || !req.book) return next();
+  if (req.method === 'POST' && req.path === '/books/switch') return next(); // that's how the book changes
+  if (Number(header) === req.book.id) return next();
+  next(new HttpError(409, `These books changed in another tab or window. This page has been refreshed to show ${req.book.name}; check your changes and try again.`, 'book_changed'));
+}
+
 // Most data routes need both a user and an active book.
 export function requireBook(req: Request, _res: Response, next: NextFunction) {
   if (!req.user) return next(new HttpError(401, 'Authentication required'));

@@ -10,7 +10,7 @@ import { pool, assertSafeAppRole } from './db.js';
 import { securityHeaders } from './securityHeaders.js';
 import { deleteExpiredSessions } from './auth.js';
 import { syncAllManagedCategoriesSafe } from './managedCategories.js';
-import { authContext, requireAuth, tenantDb } from './tenant.js';
+import { authContext, requireAuth, tenantDb, expectedBook } from './tenant.js';
 
 import { auth } from './routes/auth.js';
 import { books } from './routes/books.js';
@@ -130,6 +130,7 @@ app.use('/api/invites', invites);
 // Everything else under /api requires a logged-in user, and runs on a
 // book-bound DB connection so row-level security applies.
 app.use('/api', requireAuth);
+app.use('/api', expectedBook);
 app.use('/api', tenantDb);
 app.use('/api/books', books);
 app.use('/api/imports', imports);
@@ -182,7 +183,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   // so pass it through at any status. Anything else may carry internal/DB error text
   // and is masked.
   const message = isHttpError ? (err.message || 'Error') : 'Internal error';
-  res.status(status).json({ error: message });
+  res.status(status).json(isHttpError && err.code ? { error: message, code: err.code } : { error: message });
 });
 
 // The configured Express app, exported so integration tests can mount it on an

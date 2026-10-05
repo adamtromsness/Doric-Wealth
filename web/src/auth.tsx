@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api, setUnauthorizedHandler } from './api';
+import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler } from './api';
 
 export interface User {
   id: number;
@@ -52,13 +52,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
 
-  const apply = (m: Me) => { setMe(m); captureTimezone(m); };
+  const apply = (m: Me) => { setExpectedBook(m.activeBook?.id ?? null); setMe(m); captureTimezone(m); };
 
   useEffect(() => {
     // A 401 from any request drops us to the logged-out state.
-    setUnauthorizedHandler(() => setMe(null));
+    setUnauthorizedHandler(() => { setExpectedBook(null); setMe(null); });
+    // Another tab switched books: show the active book here too.
+    setBookChangedHandler(() => { api.get<Me>('/auth/me').then(apply).catch(() => {}); });
     api.get<Me>('/auth/me').then(apply).catch(() => setMe(null)).finally(() => setReady(true));
-    return () => setUnauthorizedHandler(null);
+    return () => { setUnauthorizedHandler(null); setBookChangedHandler(null); };
   }, []);
 
   const value: AuthValue = {
@@ -68,7 +70,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     activeBook: me?.activeBook ?? null,
     login: async (email, password) => apply(await api.post<Me>('/auth/login', { email, password })),
     register: async (input) => apply(await api.post<Me>('/auth/register', input)),
-    logout: async () => { await api.post('/auth/logout'); setMe(null); },
+    logout: async () => { await api.post('/auth/logout'); setExpectedBook(null); setMe(null); },
     switchBook: async (id) => apply(await api.post<Me>('/books/switch', { book_id: id })),
     acceptInvite: async (code) => apply(await api.post<Me>(`/invites/${encodeURIComponent(code)}/accept`)),
     refresh: async () => apply(await api.get<Me>('/auth/me')),

@@ -3,7 +3,7 @@ import {
   money, parseLocalDate, shortDate, todayStr, isHttpUrl, normalizeUrl, isOpenableUrl,
   formatPhone, accountTypeLabel, propertyTypeLabel, disposalTypeLabel, propertyDisposalTypeLabel,
   ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES,
-  api, apiStream, apiBlob, apiDownload, setUnauthorizedHandler,
+  api, apiStream, apiBlob, apiDownload, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler,
 } from './api';
 
 // ── Pure formatters ────────────────────────────────────────────────────────
@@ -141,6 +141,25 @@ describe('api client', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     setUnauthorizedHandler(null);
+  });
+
+  it('sends the book this tab shows, and reacts when another tab switched books', async () => {
+    const changed = vi.fn();
+    setExpectedBook(4);
+    setBookChangedHandler(changed);
+    fetchMock.mockResolvedValue(mockResponse({ ok: false, status: 409, json: { error: 'These books changed in another tab or window.', code: 'book_changed' } }));
+    await expect(api.post('/accounts', { name: 'X' })).rejects.toThrow('These books changed in another tab');
+    expect(fetchMock.mock.calls[0][1].headers['x-book-id']).toBe('4');
+    expect(changed).toHaveBeenCalledTimes(1);
+    // An ordinary 409 doesn't trigger it, and no header is sent without a book.
+    fetchMock.mockResolvedValue(mockResponse({ ok: false, status: 409, json: { error: 'Conflict' } }));
+    await expect(api.post('/x')).rejects.toThrow('Conflict');
+    expect(changed).toHaveBeenCalledTimes(1);
+    setExpectedBook(null);
+    fetchMock.mockResolvedValue(mockResponse({ json: {} }));
+    await api.get('/y');
+    expect(fetchMock.mock.calls[2][1].headers['x-book-id']).toBeUndefined();
+    setBookChangedHandler(null);
   });
 
   it('GET returns parsed JSON and sends credentials + content-type', async () => {
