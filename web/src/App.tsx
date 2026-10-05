@@ -1,7 +1,6 @@
-import { lazy, Suspense, useEffect, useLayoutEffect } from 'react';
-import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { lazy, Suspense } from 'react';
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { useAuth, displayName } from './auth';
-import { setBookSwitching } from './api';
 import { DoricBadge } from './components/DoricMark';
 // Pages are route-split (React.lazy) so each loads on demand — this keeps the
 // initial bundle small instead of shipping every screen (and its charts) up front.
@@ -82,20 +81,8 @@ const nav = [
   { section: 'Insight', links: [['/analysis', 'AI Analysis'], ['/grocery-insights', 'Grocery Insights']] },
 ];
 
-// Rendered inside the signed-in interface, which is keyed by book: when it mounts for
-// a new book, the old book's pages and forms are gone, so requests can resume. A layout
-// effect, so it runs before any page's data-loading effects.
-function BookScope() {
-  useLayoutEffect(() => { setBookSwitching(false); }, []);
-  return null;
-}
-
 export default function App() {
   const { ready, user, activeBook, bookNotice, dismissBookNotice } = useAuth();
-  const navigate = useNavigate();
-  // Followed another tab to a different book: start from the dashboard, since the page
-  // this tab was on belonged to the old book.
-  useEffect(() => { if (bookNotice) navigate('/', { replace: true }); }, [bookNotice]);
 
   if (!ready) {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>Loading…</div>;
@@ -119,8 +106,7 @@ export default function App() {
   }
 
   return (
-    <div className="app" key={activeBook?.id ?? 'none'}>
-      <BookScope />
+    <div className="app">
       <aside className="sidebar">
         <div className="wordmark">
           <DoricBadge size={30} className="doric-mark" />

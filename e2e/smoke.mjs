@@ -142,6 +142,48 @@ async function full() {
     const names = await page.evaluate(async () => (await (await fetch('/api/accounts')).json()).map((a) => a.name));
     check(!names.includes('Stale Tab Account'), 'the stale tab wrote into the other book');
     step('a stale tab cannot write into another book');
+
+    // Codex's case: an action already under way when the book changes (deleting data
+    // waits for a safety download first) must not carry on into the new book. Both
+    // tabs now show Second Book. Start a delete there and hold its safety download; the
+    // other tab switches to Smoke Book; then let the download finish: no delete may be
+    // sent.
+    await page.evaluate(() => fetch('/api/accounts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Second Checking', type: 'checking' }) }));
+    const purges = [];
+    stale.on('request', (r) => { if (r.url().includes('/api/backup/purge') && !r.url().includes('preview')) purges.push(r.headers()['x-book-id']); });
+    await stale.goto(`${base}/my-data`);
+    await stale.getByRole('button', { name: 'Purge Data' }).click();
+    await stale.locator('label').filter({ hasText: 'Accounts & balances' }).click();
+    await stale.getByRole('button', { name: 'Preview Deletion' }).click();
+    await stale.getByPlaceholder('DELETE').fill('DELETE');
+    let releaseDownload;
+    const downloadHeld = new Promise((r) => { releaseDownload = r; });
+    let downloadStarted;
+    const started = new Promise((r) => { downloadStarted = r; });
+    await stale.route('**/api/backup/export**', async (route) => {
+      const response = await route.fetch(); // the server answers for Second Book
+      downloadStarted();
+      await downloadHeld;
+      await route.fulfill({ response }).catch(() => {}); // the page may be gone by now
+    });
+    await stale.getByRole('button', { name: /^Delete \d+ Records?$/ }).click();
+    await started;
+    // The other tab switches to Smoke Book; the stale tab learns of it from its next
+    // request (previewing the deletion again), which is refused.
+    const smokeId = await page.evaluate(async () => {
+      const books = await (await fetch('/api/books')).json();
+      const id = books.find((b) => b.name === 'Smoke Book').id;
+      await fetch('/api/books/switch', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ book_id: id }) });
+      return id;
+    });
+    await stale.getByRole('button', { name: 'Preview Deletion' }).click();
+    await stale.getByText(/Another tab switched to Smoke Book/).waitFor();
+    releaseDownload();
+    await stale.waitForTimeout(1500);
+    check(purges.length === 0, `the old delete carried on into the new book (X-Book-Id ${purges.join(', ')}; Smoke Book is ${smokeId})`);
+    const smokeNames = await page.evaluate(async () => (await (await fetch('/api/accounts')).json()).map((a) => a.name));
+    check(smokeNames.includes('Smoke Checking'), 'Smoke Book lost its accounts');
+    step('an action under way when the book changes does not carry on into the new book');
   } finally {
     await browser.close();
     if (app.exitCode == null) {

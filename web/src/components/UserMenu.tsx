@@ -59,11 +59,8 @@ export function UserMenu() {
                   onClick={async () => {
                     setOpen(false);
                     if (activeBook?.id === h.id) return;
-                    // Reload onto the dashboard so every page's data refetches under
-                    // the newly-active book (and we never linger on a detail
-                    // page that belongs to the previous one).
+                    // Switching reloads onto the new book's dashboard (AuthProvider).
                     await switchBook(h.id);
-                    window.location.assign('/');
                   }}>
                   <span className="usermenu-check" aria-hidden>{activeBook?.id === h.id ? '✓' : ''}</span>
                   <span className="usermenu-itemlabel">{h.name}</span>

@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching } from './api';
+import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching, reloadAt } from './api';
 
 export interface User {
   id: number;
@@ -50,23 +50,36 @@ interface AuthValue {
 }
 
 const AuthContext = createContext<AuthValue | null>(null);
+const NOTICE_KEY = 'doric.bookNotice';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [me, setMe] = useState<Me | null>(null);
 
-  const [bookNotice, setBookNotice] = useState<string | null>(null);
+  // A note carried over the reload that follows another tab's book switch (below).
+  const [bookNotice, setBookNotice] = useState<string | null>(() => {
+    try { const n = sessionStorage.getItem(NOTICE_KEY); sessionStorage.removeItem(NOTICE_KEY); return n; } catch { return null; }
+  });
   const shownBook = useRef<number | null>(null);
 
   const apply = (m: Me, notice: string | null = null) => {
     const next = m.activeBook?.id ?? null;
-    // Changing books, from here or another tab: hold requests until the interface is
-    // rebuilt for the new book, so nothing from the old one is sent (see api.ts).
-    if (shownBook.current != null && next !== shownBook.current) setBookSwitching(true);
+    // Changing books, from here or another tab: reload onto the new book's dashboard.
+    // Rebuilding the interface isn't enough, since an action already under way for the
+    // old book (e.g. waiting on a download before deleting) would carry on afterwards
+    // and send its request as the new book. A reload ends all of them, and requests
+    // are held until it happens (see api.ts).
+    if (shownBook.current != null && next !== shownBook.current) {
+      setBookSwitching(true);
+      setExpectedBook(next);
+      if (notice) { try { sessionStorage.setItem(NOTICE_KEY, notice); } catch { /* the note is optional */ } }
+      reloadAt('/');
+      return;
+    }
     shownBook.current = next;
-    setExpectedBook(next); setMe(m); setBookNotice(notice); captureTimezone(m);
+    setExpectedBook(next); setMe(m); captureTimezone(m);
   };
-  const signedOut = () => { shownBook.current = null; setBookSwitching(false); setExpectedBook(null); setMe(null); setBookNotice(null); };
+  const signedOut = () => { shownBook.current = null; setExpectedBook(null); setMe(null); setBookNotice(null); };
 
   useEffect(() => {
     // A 401 from any request drops us to the logged-out state.

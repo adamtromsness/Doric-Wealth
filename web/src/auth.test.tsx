@@ -6,9 +6,9 @@ import { AuthProvider, useAuth, displayName } from './auth';
 // Mock the api module the provider depends on.
 vi.mock('./api', () => {
   const api = { get: vi.fn(), post: vi.fn(), put: vi.fn() };
-  return { api, setUnauthorizedHandler: vi.fn(), setExpectedBook: vi.fn(), setBookChangedHandler: vi.fn(), setBookSwitching: vi.fn() };
+  return { api, setUnauthorizedHandler: vi.fn(), setExpectedBook: vi.fn(), setBookChangedHandler: vi.fn(), setBookSwitching: vi.fn(), reloadAt: vi.fn() };
 });
-import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching } from './api';
+import { api, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching, reloadAt } from './api';
 
 const meFixture = {
   user: { id: 1, email: 'a@b.com', name: 'Ada', timezone: 'America/New_York' },
@@ -59,21 +59,40 @@ describe('AuthProvider', () => {
     expect(api.get).toHaveBeenCalledWith('/auth/me');
   });
 
-  it('tells the API layer which book this tab shows, and refreshes when another tab switched', async () => {
+  it('tells the API layer which book this tab shows; when another tab switched, it holds requests and reloads', async () => {
     (api.get as any).mockResolvedValue(meFixture);
     render(<AuthProvider><Probe /></AuthProvider>);
     await waitFor(() => expect(setExpectedBook).toHaveBeenCalledWith(meFixture.activeBook.id));
     const handler = (setBookChangedHandler as any).mock.calls[0][0];
     (api.get as any).mockResolvedValue({ ...meFixture, activeBook: { id: 2, name: 'Cabin', role: 'owner' } });
-    expect(setBookSwitching).not.toHaveBeenCalledWith(true);
+    expect(setBookSwitching).not.toHaveBeenCalled();
     handler();
-    await waitFor(() => expect(screen.getByTestId('active')).toHaveTextContent('Cabin'));
-    expect(setExpectedBook).toHaveBeenLastCalledWith(2);
-    // Requests are held until the interface is rebuilt for the new book (App does that).
+    // Codex's case: an action already under way for the old book would carry on after
+    // a remount. A reload ends it; until then, requests are held.
+    await waitFor(() => expect(reloadAt).toHaveBeenCalledWith('/'));
     expect(setBookSwitching).toHaveBeenCalledWith(true);
-    expect(screen.getByTestId('notice')).toHaveTextContent(/Another tab switched to Cabin.*hadn't saved here was cleared/);
+    expect(sessionStorage.getItem('doric.bookNotice')).toMatch(/Another tab switched to Cabin.*hadn't saved here was cleared/);
+    expect(screen.getByTestId('active')).toHaveTextContent('Home', { normalizeWhitespace: true });
+  });
+
+  it('after that reload, shows the note once, until dismissed', async () => {
+    sessionStorage.setItem('doric.bookNotice', 'Another tab switched to Cabin, so this tab did too.');
+    (api.get as any).mockResolvedValue(meFixture);
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await waitFor(() => expect(screen.getByTestId('notice')).toHaveTextContent('Another tab switched to Cabin'));
+    expect(sessionStorage.getItem('doric.bookNotice')).toBeNull();
     await userEvent.setup().click(screen.getByText('dismiss'));
     expect(screen.getByTestId('notice')).toHaveTextContent('');
+  });
+
+  it('switching books in this tab reloads onto the new book too', async () => {
+    (api.get as any).mockResolvedValue(meFixture);
+    (api.post as any).mockResolvedValue({ ...meFixture, activeBook: { id: 2, name: 'Cabin', role: 'owner' } });
+    render(<AuthProvider><Probe /></AuthProvider>);
+    await waitFor(() => expect(screen.getByTestId('user')).toHaveTextContent('a@b.com'));
+    await userEvent.setup().click(screen.getByText('switch'));
+    await waitFor(() => expect(reloadAt).toHaveBeenCalledWith('/'));
+    expect(sessionStorage.getItem('doric.bookNotice')).toBeNull();
   });
 
   it('falls back to anonymous when /auth/me fails', async () => {

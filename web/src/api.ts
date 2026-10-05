@@ -15,12 +15,14 @@ export function setExpectedBook(id: number | null) { expectedBookId = id; }
 let onBookChanged: (() => void) | null = null;
 export function setBookChangedHandler(fn: (() => void) | null) { onBookChanged = fn; }
 
-// While this tab changes books, requests are held back until the interface has been
-// rebuilt for the new book (App keys it by book; BookScope lifts the hold), so nothing
-// entered for the old book, like a half-filled form or a retry, can reach the new one.
-// The session calls that make the change still go through.
+// When this tab changes books it reloads (see AuthProvider). From the moment the change
+// is seen until the page is gone, requests are held back, so nothing begun for the old
+// book (a form, a retry, an action waiting on a download) can reach the new one. The
+// session calls that make the change still go through.
 let switchingBook = false;
 export function setBookSwitching(on: boolean) { switchingBook = on; }
+// Load a page afresh (a separate function so tests can replace it).
+export function reloadAt(path: string) { window.location.assign(path); }
 function holdDuringBookSwitch(path: string) {
   if (switchingBook && !/^\/(auth\/|books\/switch)/.test(path)) throw new Error('This tab is changing books. Try again in a moment.');
 }
