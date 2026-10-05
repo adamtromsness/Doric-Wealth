@@ -14,6 +14,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-05
+
 ### Fixed
 - Nightly backups are taken reliably. They're now checked every 15 minutes and taken whenever the last one is more than a day old, so a computer that sleeps or restarts no longer skips nights. Before, backups could stop until the next restart.
 - The release notes now list the Dependants and money-field changes under v1.6.0, where they shipped.
