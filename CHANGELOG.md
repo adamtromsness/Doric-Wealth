@@ -14,6 +14,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Added
+- **Forgot password?** on the sign-in page. When email is set up, it sends a reset link that works once, for 60 minutes. Until then, it tells you to ask the person who runs Doric, who can create a one-time link for you. Resetting your password signs you out on every device.
+
 ## [1.7.0] - 2026-10-05
 
 ### Fixed

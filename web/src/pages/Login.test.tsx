@@ -54,6 +54,11 @@ describe('Login page', () => {
     expect(screen.getByRole('link', { name: 'Create one' })).toBeInTheDocument();
   });
 
+  it('links to Forgot password?', () => {
+    renderAt();
+    expect(screen.getByRole('link', { name: 'Forgot password?' })).toHaveAttribute('href', '/forgot-password');
+  });
+
   it('submits credentials and navigates home on success', async () => {
     login.mockResolvedValue(undefined);
     const user = userEvent.setup();

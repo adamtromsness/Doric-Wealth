@@ -51,6 +51,12 @@ services:
       TRUST_PROXY: "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       RENTCAST_API_KEY: ${RENTCAST_API_KEY:-}
+      # Outgoing email for password reset links (off unless SMTP_HOST and MAIL_FROM are set).
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
     ports:
       - "127.0.0.1:4100:4000"
 
