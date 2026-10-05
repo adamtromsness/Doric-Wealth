@@ -16,6 +16,13 @@ import { cleanMerchant, setImportStatus, autoLinkTransferRules } from './imports
 
 export const connections = Router();
 
+// Pending bank transactions are not imported for now. Once imported, a transaction is
+// skipped by later syncs (its provider id is known), so a pending charge would keep its
+// pending amount and date forever, and some banks give the posted version a new id,
+// which would import it twice. Until pending-to-posted updates are handled, every sync
+// asks for posted transactions only, whatever a link's include_pending says.
+export const PENDING_IMPORTS_ENABLED = false;
+
 // Upsert account_links for every external account the provider returns, so banks
 // added to the connection AFTER it was claimed get discovered (they appear unmapped
 // until the user maps them). ON CONFLICT only refreshes metadata — it never clears an
@@ -87,6 +94,16 @@ async function recordHoldings(
 // synced snapshot for the same date so re-syncs stay idempotent). SimpleFIN reports
 // a liability (credit card / loan) balance as negative when money is owed; the app
 // stores a liability anchor as the positive amount owed, so we negate for liabilities.
+// The book owner's IANA timezone (null → UTC), for turning provider timestamps into
+// calendar dates.
+async function bookOwnerTimezone(client: { query: (text: string, params: any[]) => Promise<any> }, bookId: number): Promise<string | null> {
+  return (await client.query(
+    `SELECT u.timezone FROM memberships m JOIN users u ON u.id = m.user_id
+      WHERE m.book_id = $1 ORDER BY (m.role = 'owner') DESC, m.created_at LIMIT 1`,
+    [bookId]
+  )).rows[0]?.timezone ?? null;
+}
+
 async function recordSyncedBalance(
   client: { query: (text: string, params: any[]) => Promise<any> },
   bookId: number,
@@ -97,7 +114,12 @@ async function recordSyncedBalance(
   const acct = (await client.query(`SELECT is_liability FROM accounts WHERE id = $1 AND book_id = $2`, [accountId, bookId])).rows[0];
   if (!acct) return;
   const snapshotBalance = round2(acct.is_liability ? -balance : balance); // owed amount is stored positive
-  const asOf = new Date(balanceDateEpoch * 1000).toISOString().slice(0, 10);
+  // Date the snapshot when the bank measured the balance (its balance-date), as a
+  // calendar day in the book owner's timezone, the same way imported transactions are
+  // dated. Balances then add transactions posted after that day (ACCOUNT_BALANCES),
+  // so a balance reported a few days ago still yields today's balance; dating it to
+  // the sync instead would drop everything posted between the two.
+  const asOf = dateInTz(balanceDateEpoch * 1000, await bookOwnerTimezone(client, bookId));
   await client.query(
     `INSERT INTO account_balances (account_id, balance, as_of, book_id)
      VALUES ($1, $2, $3, $4)
@@ -138,11 +160,7 @@ export async function stageSimplefinTxns(
   // The provider sends epoch timestamps; convert them to calendar dates in the book
   // owner's timezone (not the server's UTC day), so a transaction near midnight isn't
   // dated a day off for users west of UTC. Fetched once (null → UTC).
-  const ownerTz: string | null = (await client.query(
-    `SELECT u.timezone FROM memberships m JOIN users u ON u.id = m.user_id
-      WHERE m.book_id = $1 ORDER BY (m.role = 'owner') DESC, m.created_at LIMIT 1`,
-    [bookId]
-  )).rows[0]?.timezone ?? null;
+  const ownerTz = await bookOwnerTimezone(client, bookId);
 
   // Prefetch once to avoid an N+1 across (potentially thousands of) payload rows:
   //   (a) every provider id already known for this book (committed / staged / consumed)
@@ -178,13 +196,11 @@ export async function stageSimplefinTxns(
       [a.balance ?? null, a['balance-date'] ?? null, linkId, a.id, bookId]
     );
 
-    // Record the bank's authoritative balance as a snapshot dated to the pull (nowS),
-    // not the bank's balance-date — so a sync immediately brings the account's current
-    // balance up to the latest reported figure even when the bank's balance-date lags.
-    // (recordSyncedBalance handles the asset vs. liability sign convention.) The guard
-    // still requires a real balance reading (balance + balance-date present).
+    // Record the bank's balance as a snapshot dated to when the bank measured it (its
+    // balance-date; see recordSyncedBalance). Requires a real reading: a balance and
+    // its balance-date. (recordSyncedBalance handles the liability sign convention.)
     if (a.balance != null && a['balance-date'] != null && Number.isFinite(Number(a.balance))) {
-      await recordSyncedBalance(client, bookId, accountId, Number(a.balance), nowS);
+      await recordSyncedBalance(client, bookId, accountId, Number(a.balance), Number(a['balance-date']));
       balances.push({ name: a.name, balance: Number(a.balance), currency: a.currency || 'USD' });
     }
     // Replace this account's holdings/composition when the provider reports positions.
@@ -194,6 +210,9 @@ export async function stageSimplefinTxns(
       total++;
       const amt = Number(t.amount);
       if (!Number.isFinite(amt) || amt === 0) { skipped++; continue; }
+      // A pending transaction sent anyway (see PENDING_IMPORTS_ENABLED) is left for a
+      // later sync, once it has posted.
+      if (!PENDING_IMPORTS_ENABLED && (t.pending || !t.posted)) { skipped++; continue; }
       const direction = amt < 0 ? 'expense' : 'income';        // negative = money out
       const amount = round2(Math.abs(amt)); // snap provider float to cents so the dedup match below is exact
       // SimpleFIN sends posted=0 for still-pending transactions, so `||` (not `??`)
@@ -338,7 +357,7 @@ async function syncBookLinks(bookId: number): Promise<void> {
     const since = link.last_synced_epoch ? Number(link.last_synced_epoch) - 4 * 86400 : nowS - 90 * 86400;
     let pulled;
     try {
-      pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: link.include_pending });
+      pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: PENDING_IMPORTS_ENABLED && link.include_pending });
     } catch (e) {
       await markLinkError(bookId, link.id, e);
       continue;
@@ -414,12 +433,12 @@ connections.post('/simplefin/claim', ah(async (req, res) => {
 connections.get('/', ah(async (req, res) => {
   const bookId = hh(req);
   const links = await query(
-    `SELECT id, provider, status, last_error, account_errors, include_pending, auto_import_enabled, auto_import_frequency,
+    `SELECT id, provider, status, last_error, account_errors, (include_pending AND $2::boolean) AS include_pending, auto_import_enabled, auto_import_frequency,
             to_char(auto_import_start_at, 'YYYY-MM-DD"T"HH24:MI') AS auto_import_start_at,
             to_char(last_synced_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS last_synced_at,
             to_char(created_at, 'YYYY-MM-DD"T"HH24:MI:SS') AS connected_at
        FROM institution_links WHERE book_id = $1 ORDER BY id`,
-    [bookId]
+    [bookId, PENDING_IMPORTS_ENABLED]
   );
   const accts = await query(
     `SELECT al.id, al.link_id, al.external_account_id, al.name AS sf_name, al.org_name, al.currency,
@@ -683,7 +702,7 @@ connections.post('/:id/sync', ah(async (req, res) => {
 
   let pulled;
   try {
-    pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: link.include_pending });
+    pulled = await fetchAccounts(decryptSecret(link.access_url_enc), { startDate: since, pending: PENDING_IMPORTS_ENABLED && link.include_pending });
   } catch (e: any) {
     await query(`UPDATE institution_links SET status = 'error', last_error = $2 WHERE id = $1 AND book_id = $3`,
       [linkId, String(e?.message ?? 'Sync failed.').slice(0, 300), bookId]);
@@ -703,7 +722,11 @@ connections.post('/:id/settings', ah(async (req, res) => {
   const bookId = hh(req);
   const linkId = integerId(req.params.id, 'id');
   const sets: string[] = []; const vals: any[] = [];
-  if ('include_pending' in req.body) { vals.push(booleanValue(req.body.include_pending, 'include_pending')); sets.push(`include_pending = $${vals.length}`); }
+  if ('include_pending' in req.body) {
+    const v = booleanValue(req.body.include_pending, 'include_pending');
+    if (v && !PENDING_IMPORTS_ENABLED) throw new HttpError(400, "Pending transactions can't be imported yet. Doric imports transactions once they post.");
+    vals.push(v); sets.push(`include_pending = $${vals.length}`);
+  }
   if ('auto_import_enabled' in req.body) { vals.push(booleanValue(req.body.auto_import_enabled, 'auto_import_enabled')); sets.push(`auto_import_enabled = $${vals.length}`); }
   if ('auto_import_frequency' in req.body) { vals.push(enumValue(req.body.auto_import_frequency, 'auto_import_frequency', ['daily', 'weekly'])); sets.push(`auto_import_frequency = $${vals.length}`); }
   if ('auto_import_start_at' in req.body) {

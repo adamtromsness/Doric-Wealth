@@ -44,9 +44,19 @@ export const config = {
   // invite-only in production and open otherwise (dev, tests); any other value fails
   // closed to 'invite'.
   signupMode: ((process.env.SIGNUP_MODE ?? (process.env.NODE_ENV === 'production' ? 'invite' : 'open')) === 'open' ? 'open' : 'invite') as 'open' | 'invite',
+  // SimpleFIN servers Doric will contact (setup-token claims and account fetches).
+  // An allow-list, so a crafted setup token can't make the server call anything else.
+  // Comma-separated hostnames; add yours if you use another SimpleFIN provider.
+  simplefinHosts: (process.env.SIMPLEFIN_ALLOWED_HOSTS ?? 'bridge.simplefin.org,beta-bridge.simplefin.org')
+    .split(',').map((h) => h.trim().toLowerCase()).filter(Boolean),
   // Who pilot users contact about their data (shown on the Privacy page). Optional;
   // without it the page says to contact the person who invited them.
   contactEmail: process.env.CONTACT_EMAIL ?? '',
+  // How the server's backups are set up, for the Privacy page (the backup jobs run
+  // beside the app, so it's told): days each backup is kept (unset = not stated),
+  // and whether copies go off the server.
+  backupKeepDays: Number(process.env.BACKUP_KEEP_DAYS) > 0 ? Number(process.env.BACKUP_KEEP_DAYS) : null,
+  offsiteBackups: !!process.env.OFFSITE_BUCKET,
   // Outgoing email (password reset links), over SMTP: OCI Email Delivery, Amazon SES,
   // or any SMTP relay. Email is off unless SMTP_HOST and MAIL_FROM are set; then
   // "Forgot password?" emails a link instead of telling the user to ask the operator.

@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, registerUser } from './helpers.js';
+import { startServer, stopServer, registerUser, testDbClient } from './helpers.js';
 
 let base: string;
 before(async () => { base = await startServer(); });
@@ -265,4 +265,99 @@ test('utility accounts are tenant-isolated (another book cannot touch them)', as
   assert.equal((await b.client.put(`/api/utilities/accounts/${id}`, { name: 'hax' })).status, 404);
   assert.equal((await b.client.post(`/api/utilities/accounts/${id}/cancel`, {})).status, 404);
   assert.equal((await b.client.get(`/api/utilities/accounts/${id}/documents`)).status, 404);
+});
+
+test('linking an existing transaction pays only what it paid, once, and only if it is an expense', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const gas = (await client.post('/api/utilities/accounts', { name: 'Gas', utility_type: 'gas' })).body.id;
+  const invoice = (amount: number, payment_transaction_id: number) => client.post('/api/utilities/invoices', {
+    provider: 'Gas Co', account_id: acct, paid: true, payment_transaction_id,
+    lines: [{ amount, utility_account_id: gas, description: 'Gas' }],
+  });
+  const find = async (id: number) => (await client.get('/api/utilities/invoices')).body.find((i: any) => i.id === id);
+
+  // A $10 payment can't settle a $100 bill.
+  const ten = (await client.post('/api/transactions', { amount: 10, account_id: acct, direction: 'expense', txn_date: '2026-07-01' })).body.id;
+  const big = await invoice(100, ten);
+  assert.equal(big.status, 201);
+  assert.equal((await find(big.body.id)).paid, false, 'only $10 of $100 is covered');
+
+  // The same transaction can't cover another bill: it's used up.
+  const again = await invoice(5, ten);
+  assert.equal(again.status, 409);
+  assert.match(again.body.error, /already fully applied/);
+
+  // A $60 payment covers a $40 bill and leaves $20 for another.
+  const sixty = (await client.post('/api/transactions', { amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-02' })).body.id;
+  assert.equal((await find((await invoice(40, sixty)).body.id)).paid, true);
+  assert.equal((await find((await invoice(20, sixty)).body.id)).paid, true);
+  assert.equal((await invoice(1, sixty)).status, 409);
+
+  // Income can't be a bill payment.
+  const refund = (await client.post('/api/transactions', { amount: 50, account_id: acct, direction: 'income', txn_date: '2026-07-03' })).body.id;
+  const r = await invoice(50, refund);
+  assert.equal(r.status, 400);
+  assert.match(r.body.error, /Only an expense/);
+});
+
+test('marking a bill paid records a posted payment on the paid date', async () => {
+  const { client } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking', opening_balance: 500 })).body.id;
+  const inv = await client.post('/api/utilities/invoices', {
+    provider: 'Water Co', account_id: acct, paid: true, paid_date: '2026-07-15',
+    lines: [{ amount: 45, description: 'Water' }],
+  });
+  assert.equal(inv.status, 201);
+  const list = (await client.get('/api/transactions?limit=10')).body;
+  assert.equal(list.pending.length, 0, 'not left pending');
+  const pay = list.posted.find((t: any) => t.description === 'Utility payment');
+  assert.equal(String(pay.posted_date).slice(0, 10), '2026-07-15');
+  assert.equal(Number((await client.get(`/api/accounts/${acct}`)).body.posted_balance), 455, 'the posted balance reflects the payment');
+});
+
+test('editing a bill payment keeps its invoice payments unless the edit changes what it paid', async () => {
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const gas = (await client.post('/api/utilities/accounts', { name: 'Gas', utility_type: 'gas' })).body.id;
+  const bill = async (amount: number, payment_transaction_id?: number) => (await client.post('/api/utilities/invoices', {
+    provider: 'Gas Co', account_id: acct, paid: payment_transaction_id != null, payment_transaction_id,
+    lines: [{ amount, utility_account_id: gas, description: 'Gas' }],
+  })).body.id;
+  const paid = async (id: number) => (await client.get('/api/utilities/invoices')).body.find((i: any) => i.id === id).paid;
+  const edit = (id: number, changes: Record<string, unknown>) => client.put(`/api/transactions/${id}`, {
+    amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-02', posted_date: '2026-07-02', merchant: 'Gas Co', ...changes,
+  });
+
+  // Codex's case: a $60 payment linked by hand to a $40 and a $20 bill. Changing only
+  // its merchant used to drop the $20 bill's payment.
+  const sixty = (await client.post('/api/transactions', { amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-02', posted_date: '2026-07-02', merchant: 'Gas Co' })).body.id;
+  const b40 = await bill(40, sixty);
+  const b20 = await bill(20, sixty);
+  assert.deepEqual([await paid(b40), await paid(b20)], [true, true]);
+  assert.equal((await edit(sixty, { merchant: 'Gas Company', description: 'July' })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20)], [true, true], 'an unrelated edit keeps both payments');
+  // Lowering the amount trims the newest link; it's no longer enough for the $20 bill.
+  assert.equal((await edit(sixty, { amount: 45 })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20)], [true, false]);
+  // No longer an expense: it pays nothing.
+  assert.equal((await edit(sixty, { amount: 45, direction: 'income' })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20)], [false, false]);
+
+  // Categorized to the utility: the payment spreads over open bills, oldest first.
+  const db = testDbClient();
+  await db.connect();
+  let gasCat: number;
+  try {
+    gasCat = (await db.query(`SELECT id FROM categories WHERE book_id = $1 AND managed AND source_kind = 'utility' AND source_id = $2`, [bookId, gas])).rows[0].id;
+  } finally {
+    await db.end();
+  }
+  const c40 = await bill(40);
+  const c20 = await bill(20);
+  const byCat = (await client.post('/api/transactions', { amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-05', posted_date: '2026-07-05', category_id: gasCat })).body.id;
+  // The earlier bills were reopened above, so they're oldest: the $60 settles them.
+  assert.deepEqual([await paid(b40), await paid(b20), await paid(c40), await paid(c20)], [true, true, false, false]);
+  assert.equal((await edit(byCat, { txn_date: '2026-07-05', category_id: gasCat, merchant: 'Renamed' })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20), await paid(c40), await paid(c20)], [true, true, false, false], 'unchanged by a merchant edit');
 });

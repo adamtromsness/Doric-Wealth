@@ -72,17 +72,17 @@ export async function stopServer(): Promise<void> {
 export interface ApiResponse { status: number; body: any; headers: Headers; }
 export interface Client {
   cookie: string;
-  raw(method: string, path: string, body?: unknown): Promise<ApiResponse>;
-  get(path: string): Promise<ApiResponse>;
-  post(path: string, body?: unknown): Promise<ApiResponse>;
-  put(path: string, body?: unknown): Promise<ApiResponse>;
-  del(path: string): Promise<ApiResponse>;
+  raw(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<ApiResponse>;
+  get(path: string, extraHeaders?: Record<string, string>): Promise<ApiResponse>;
+  post(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<ApiResponse>;
+  put(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<ApiResponse>;
+  del(path: string, extraHeaders?: Record<string, string>): Promise<ApiResponse>;
 }
 
 export function makeClient(base: string): Client {
   let cookie = '';
-  const raw = async (method: string, p: string, body?: unknown): Promise<ApiResponse> => {
-    const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const raw = async (method: string, p: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<ApiResponse> => {
+    const headers: Record<string, string> = { 'content-type': 'application/json', ...extraHeaders };
     if (process.env.API_TOKEN) headers['x-api-token'] = process.env.API_TOKEN;
     if (cookie) headers['cookie'] = cookie;
     const res = await fetch(base + p, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -95,10 +95,10 @@ export function makeClient(base: string): Client {
     get cookie() { return cookie; },
     set cookie(c: string) { cookie = c; },
     raw,
-    get: (p) => raw('GET', p),
-    post: (p, b) => raw('POST', p, b),
-    put: (p, b) => raw('PUT', p, b),
-    del: (p) => raw('DELETE', p),
+    get: (p, h) => raw('GET', p, undefined, h),
+    post: (p, b, h) => raw('POST', p, b, h),
+    put: (p, b, h) => raw('PUT', p, b, h),
+    del: (p, h) => raw('DELETE', p, undefined, h),
   };
 }
 

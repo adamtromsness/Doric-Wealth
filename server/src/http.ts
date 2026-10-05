@@ -7,9 +7,12 @@ export function ah(fn: (req: Request, res: Response, next: NextFunction) => Prom
 
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  // Optional machine-readable reason, returned to the client as `code`.
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 

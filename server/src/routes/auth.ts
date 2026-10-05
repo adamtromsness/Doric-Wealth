@@ -48,6 +48,19 @@ function signupInviteUsable(si: any): boolean {
   return true;
 }
 
+// What the Privacy page states that depends on how this server is set up.
+auth.get(
+  '/privacy',
+  ah(async (_req, res) => {
+    res.json({
+      contact_email: config.contactEmail || null,
+      https: /^https:\/\//i.test(config.appBaseUrl),
+      backup_keep_days: config.backupKeepDays,
+      offsite_backups: config.offsiteBackups,
+    });
+  })
+);
+
 // What the sign-up page needs to know before showing its form. first_account is true
 // only on an empty database, where the first registration needs no invite.
 auth.get(

@@ -1,12 +1,12 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, registerUser, testDbClient } from './helpers.js';
+import { startServer, stopServer, registerUser, testDbClient, setExternalFetch } from './helpers.js';
 import { encryptSecret } from '../src/secrets.js';
 import { upsertAccountLinks, markAbsentLinks, syncAllSimplefinLinksSafe, applySimplefinSync } from '../src/routes/connections.js';
 
-// A non-resolving https host: passes the SSRF/https guard but fails to connect fast,
-// so the network-error branches run without a real external call.
-const DEAD_URL = 'https://sync-test.invalid/simplefin';
+// An allowed SimpleFIN host: the test harness blocks real outside requests, so the
+// fetch fails like an unreachable server and the network-error branches run.
+const DEAD_URL = 'https://bridge.simplefin.org/simplefin-unreachable';
 
 let base: string;
 before(async () => { base = await startServer(); });
@@ -195,11 +195,15 @@ test('settings: no-fields → 400, bad enum/date → 400, valid subset updates, 
   assert.equal((await client.post(`/api/connections/${linkId}/settings`, { auto_import_start_at: 'not-a-date' })).status, 400);
 
   // Valid subset (booleans, frequency, and a start-at, plus clearing it).
-  assert.equal((await client.post(`/api/connections/${linkId}/settings`, { include_pending: true, auto_import_enabled: true, auto_import_frequency: 'weekly', auto_import_start_at: '2026-09-01T08:00' })).status, 200);
+  assert.equal((await client.post(`/api/connections/${linkId}/settings`, { include_pending: false, auto_import_enabled: true, auto_import_frequency: 'weekly', auto_import_start_at: '2026-09-01T08:00' })).status, 200);
+  // Pending imports are off for now, so turning them on is refused.
+  const pending = await client.post(`/api/connections/${linkId}/settings`, { include_pending: true });
+  assert.equal(pending.status, 400);
+  assert.match(pending.body.error, /once they post/);
   assert.equal((await client.post(`/api/connections/${linkId}/settings`, { auto_import_start_at: '' })).status, 200);
 
   // Unknown link → 404.
-  assert.equal((await client.post('/api/connections/999999/settings', { include_pending: true })).status, 404);
+  assert.equal((await client.post('/api/connections/999999/settings', { include_pending: false })).status, 404);
 });
 
 // ── Per-account auto-import toggle ────────────────────────────────────────────
@@ -444,5 +448,74 @@ test('a foreign-currency SimpleFIN account can be listed but not created, applie
     assert.ok(link.account_errors.some((e: string) => /Euro is in EUR/.test(e)));
   } finally {
     await db.end();
+  }
+});
+
+test('a synced balance is dated when the bank measured it, in the owner\'s timezone', async () => {
+  const { client, bookId } = await registerUser(base);
+  await client.put('/api/auth/profile', { timezone: 'America/Chicago' });
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body;
+  const { linkId } = await seedLink(bookId, { externalId: 'tz-1', accountId: acct.id });
+  // Measured 2026-09-08 03:00 UTC = 2026-09-07 22:00 in Chicago; synced weeks later.
+  const measured = Date.UTC(2026, 8, 8, 3, 0, 0) / 1000;
+  const db = testDbClient();
+  await db.connect();
+  try {
+    await db.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
+    await applySimplefinSync(db as any, bookId, linkId,
+      [{ org: { name: 'Bank' }, id: 'tz-1', name: 'Checking', currency: 'USD', balance: '1000.00', 'balance-date': measured, transactions: [] }] as any,
+      new Map([['tz-1', acct.id]]), null);
+    const snap = (await db.query(`SELECT to_char(as_of, 'YYYY-MM-DD') AS d, balance::float8 AS b FROM account_balances WHERE account_id = $1`, [acct.id])).rows;
+    assert.deepEqual(snap, [{ d: '2026-09-07', b: 1000 }], 'the bank\'s day in Chicago, not the sync day or the UTC day');
+  } finally {
+    await db.end();
+  }
+  // Something that posted after the bank measured the balance still counts.
+  await client.post('/api/transactions', { amount: 100, account_id: acct.id, direction: 'expense', txn_date: '2026-09-08', posted_date: '2026-09-08' });
+  assert.equal(Number((await client.get(`/api/accounts/${acct.id}`)).body.posted_balance), 900);
+});
+
+// ── Pending imports are off: a link saved with include_pending still syncs posted only ─
+test('sync asks SimpleFIN for posted transactions only, even if a link had include_pending on', async () => {
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Chk', type: 'checking' })).body.id;
+  const { linkId } = await seedLink(bookId, { accountId: acct });
+  const db = testDbClient();
+  await db.connect();
+  try {
+    await db.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
+    await db.query(`UPDATE institution_links SET include_pending = true WHERE id = $1`, [linkId]);
+  } finally {
+    await db.end();
+  }
+  const urls: string[] = [];
+  setExternalFetch(async (url) => {
+    urls.push(String(url));
+    return new Response(JSON.stringify({ errors: [], accounts: [{
+      org: { name: 'Test Bank' }, id: 'ext-1', name: 'SF Checking', currency: 'USD', balance: '100.00', 'balance-date': 1700000000,
+      transactions: [
+        { id: 'posted-1', posted: 1700000000, amount: '-5.00', description: 'COFFEE' },
+        { id: 'pending-1', posted: 0, transacted_at: 1700000000, amount: '-7.00', description: 'LUNCH', pending: true },
+      ],
+    }] }), { status: 200, headers: { 'content-type': 'application/json' } });
+  });
+  try {
+    const r = await client.post(`/api/connections/${linkId}/sync`, {});
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  } finally {
+    setExternalFetch(null);
+  }
+  assert.ok(urls.length > 0);
+  for (const u of urls) assert.equal(new URL(u).searchParams.get('pending'), '0');
+  const conn = (await client.get('/api/connections')).body.find((l: any) => l.id === linkId);
+  assert.equal(conn.include_pending, false, 'reported as off');
+  const db2 = testDbClient();
+  await db2.connect();
+  try {
+    await db2.query(`SELECT set_config('app.book_id', $1, false)`, [String(bookId)]);
+    const ext = (await db2.query(`SELECT external_id FROM staged_transactions WHERE book_id = $1 ORDER BY external_id`, [bookId])).rows.map((x) => x.external_id);
+    assert.deepEqual(ext, ['posted-1'], 'a pending row sent anyway is not staged');
+  } finally {
+    await db2.end();
   }
 });

@@ -10,7 +10,7 @@ import { pool, assertSafeAppRole } from './db.js';
 import { securityHeaders } from './securityHeaders.js';
 import { deleteExpiredSessions } from './auth.js';
 import { syncAllManagedCategoriesSafe } from './managedCategories.js';
-import { authContext, requireAuth, tenantDb } from './tenant.js';
+import { authContext, requireAuth, tenantDb, expectedBook } from './tenant.js';
 
 import { auth } from './routes/auth.js';
 import { books } from './routes/books.js';
@@ -37,6 +37,7 @@ import { dashboard } from './routes/dashboard.js';
 import { connections, syncAllSimplefinLinksSafe } from './routes/connections.js';
 import { runDueBackupsSafe } from './routes/backup.js';
 import { encryptLegacyAiKeys } from './ai/aiKeys.js';
+import { ensureKeyCheck } from './keyCheck.js';
 import { integrations } from './routes/integrations.js';
 import { receiptItems } from './routes/receiptItems.js';
 import { todos } from './routes/todos.js';
@@ -47,8 +48,30 @@ if (config.trustProxy) app.set('trust proxy', 1);
 // Security headers first, so every response carries them — including error
 // responses and the SPA's index.html served from web/dist below.
 app.use(securityHeaders);
-// CORS must allow credentials so the session cookie is sent cross-origin (dev).
-app.use(cors(config.webOrigin ? { origin: config.webOrigin, credentials: true } : { origin: true, credentials: true }));
+// Cross-origin access. The app serves its own pages and API from one origin (and the
+// dev server proxies /api), so by default no other origin is granted access. Set
+// WEB_ORIGIN only if the web app is served from a different origin than the API.
+app.use(cors(config.webOrigin ? { origin: config.webOrigin, credentials: true } : { origin: false }));
+
+// Reject state-changing requests that a browser marks as coming from another site.
+// Browsers send Origin on cross-site (and same-origin) POST/PUT/PATCH/DELETE; a page on
+// another site can't forge it, so this blocks cross-site request forgery even from
+// sibling (same-site) origins that SameSite=Lax cookies don't separate. Requests
+// without an Origin (curl, server-to-server) carry no browser cookies and pass.
+function sameOriginForWrites(req: express.Request, _res: express.Response, next: express.NextFunction) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.get('origin');
+  if (!origin) return next();
+  let host = '';
+  try { host = new URL(origin).host; } catch { /* malformed → rejected below */ }
+  const allowed = new Set<string>([req.get('host') ?? '']);
+  for (const o of [config.webOrigin, config.appBaseUrl]) {
+    try { if (o) allowed.add(new URL(o).host); } catch { /* ignore a malformed setting */ }
+  }
+  if (host && allowed.has(host)) return next();
+  next(new HttpError(403, 'This request came from another website and was blocked.'));
+}
+app.use('/api', sameOriginForWrites);
 // Liveness/readiness probes stay open (no auth, no token) — registered before the
 // API-token guard and body parsers so orchestrators can probe cheaply.
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
@@ -108,6 +131,7 @@ app.use('/api/invites', invites);
 // Everything else under /api requires a logged-in user, and runs on a
 // book-bound DB connection so row-level security applies.
 app.use('/api', requireAuth);
+app.use('/api', expectedBook);
 app.use('/api', tenantDb);
 app.use('/api/books', books);
 app.use('/api/imports', imports);
@@ -147,6 +171,10 @@ if (fs.existsSync(webDist)) {
 
 // Centralized error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  // The client went away before the response (e.g. it navigated on): its database
+  // connection was discarded mid-query (see tenantDb), so this error is expected, and
+  // there's no one to answer.
+  if (res.destroyed || res.writableEnded) return;
   // SQLSTATE DR409: a database guard refused a change with a message written for the
   // user (e.g. editing a reconciled transaction; see migration 129).
   if (err?.code === 'DR409') {
@@ -160,7 +188,7 @@ app.use((err: any, _req: express.Request, res: express.Response, _next: express.
   // so pass it through at any status. Anything else may carry internal/DB error text
   // and is masked.
   const message = isHttpError ? (err.message || 'Error') : 'Internal error';
-  res.status(status).json({ error: message });
+  res.status(status).json(isHttpError && err.code ? { error: message, code: err.code } : { error: message });
 });
 
 // The configured Express app, exported so integration tests can mount it on an
@@ -176,6 +204,10 @@ if (process.env.SERVER_NO_LISTEN !== '1') {
     // Encrypt any personal AI keys stored before at-rest encryption.
     const n = await encryptLegacyAiKeys();
     if (n) console.log(`Encrypted ${n} stored personal AI key(s).`);
+    // Prove APP_SECRET_KEY still matches this database's secrets (see keyCheck.ts).
+    if (await ensureKeyCheck(pool) === 'mismatch') {
+      console.error('APP_SECRET_KEY does not decrypt this database\'s stored secrets: bank connections and saved API keys won\'t work. Restore the original key (keep a copy outside the server). If you changed it on purpose, run node dist/keyCheck.js --reset.');
+    }
   } catch (e: any) {
     console.error(e?.message ?? e);
     process.exit(1);

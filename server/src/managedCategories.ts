@@ -1,4 +1,4 @@
-import { pool } from './db.js';
+import { pool, BOOK_LOCK } from './db.js';
 
 // Each managed group mirrors rows from a source table into category items. The
 // rowsSql is book-scoped ($1 = book id) so each book gets its own
@@ -21,7 +21,7 @@ export async function syncManagedCategories(bookId: number): Promise<void> {
   try {
     await client.query('BEGIN');
     // This runs outside a request, so set the RLS book GUC for this transaction.
-    await client.query(`SELECT set_config('app.book_id', $1, true)`, [String(bookId)]);
+    await client.query(`SELECT set_config('app.book_id', $1, true), pg_advisory_xact_lock_shared(${BOOK_LOCK}, $2)`, [String(bookId), bookId]);
     for (const g of GROUPS) {
       // Ensure the group exists for this book (skip if a manual category owns the name).
       let grp = (await client.query(

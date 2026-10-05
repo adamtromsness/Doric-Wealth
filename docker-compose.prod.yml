@@ -51,8 +51,14 @@ services:
       TRUST_PROXY: "false"
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       RENTCAST_API_KEY: ${RENTCAST_API_KEY:-}
+      # SimpleFIN servers the app may contact (default: SimpleFIN Bridge only).
+      SIMPLEFIN_ALLOWED_HOSTS: ${SIMPLEFIN_ALLOWED_HOSTS:-bridge.simplefin.org,beta-bridge.simplefin.org}
       # Shown on the Privacy page as the contact for questions and data deletion.
       CONTACT_EMAIL: ${CONTACT_EMAIL:-}
+      # Also stated on the Privacy page: how long backups are kept, and whether copies
+      # go off the machine (the backup and offsite services below use the same values).
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
+      OFFSITE_BUCKET: ${OFFSITE_BUCKET:-}
       # Outgoing email for password reset links (off unless SMTP_HOST and MAIL_FROM are set).
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}

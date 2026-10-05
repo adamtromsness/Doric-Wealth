@@ -47,6 +47,10 @@ Set on the ECS task definition. The image already defaults `NODE_ENV=production`
 | `DB_POOL_MAX` | `20` | max pooled connections (one per in-flight request) |
 | `APP_BASE_URL` | `https://app.example.com` | builds absolute invite links |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `MAIL_FROM` | optional | outgoing email for password reset links (any SMTP relay: OCI Email Delivery, Amazon SES, …). Without them, "Forgot password?" tells the user to ask the operator, who runs `node dist/passwordReset.js person@example.com` to get a 24-hour, one-time link. Needs `APP_BASE_URL` for the links. |
+| `CONTACT_EMAIL` | optional | shown on the Privacy page as who to contact about data and account deletion (without it: "the person who invited you") |
+| `BACKUP_KEEP_DAYS` | optional | days each server backup is kept. Set it to match your backup retention: the Privacy page states it (daily backups, kept this long) and that deleted data lasts that long in backups. Unset, the page makes no backup claim. |
+| `OFFSITE_BUCKET` | optional | set when backups are copied off the server (see "Off-machine backup copies"); the Privacy page then says so |
+| `SIMPLEFIN_ALLOWED_HOSTS` | optional | comma-separated SimpleFIN servers the app may contact (default `bridge.simplefin.org,beta-bridge.simplefin.org`). Setup tokens and access URLs for any other host are refused, and redirects aren't followed. |
 | `SIGNUP_MODE` | `invite` (default in prod) | `invite`: sign-up needs a signup invite or a book invite code (the first account on an empty database is exempt). `open`: anyone can sign up. Unknown values fail closed to `invite`. |
 | `COOKIE_SECURE` | `true` (default in prod) | session cookie sent over HTTPS only |
 | `TRUST_PROXY` | `true` (default in prod) | trust the ALB's `X-Forwarded-Proto` |
@@ -119,6 +123,24 @@ To add someone to one of your books instead, use **My Books → New Invite Link*
 app; that link also works for sign-up. (Locally: `scripts/local-prod/invite.sh` with the
 same arguments.)
 
+## 5c. Delete an account (on request)
+
+The Privacy page tells people to ask the operator to delete their account. Run it
+first without `--yes` to see what it will do:
+
+```bash
+node dist/deleteAccount.js person@example.com            # dry run
+node dist/deleteAccount.js person@example.com --yes      # delete
+```
+
+It deletes the account and every book only that person belongs to, with all data in
+them, and removes them from books shared with others (those stay with the other
+members). If they're the only owner of a shared book, it refuses until you name a
+member of that book to take it over: `--new-owner other@example.com`. Their data
+remains in server backups (and off-machine copies) until those expire after
+`BACKUP_KEEP_DAYS`. (Locally: `scripts/local-prod/delete-account.sh` with the same
+arguments.)
+
 ## 6. ECS Fargate service + ALB
 
 - Task: the image from step 1, container port **4000**, env from step 3.
@@ -146,5 +168,29 @@ backup dump to an S3-compatible bucket every hour and deletes copies older than
 `BACKUP_KEEP_DAYS`. `scripts/local-prod/deploy.sh` starts it when `OFFSITE_BUCKET` is set
 in `.env.production` (see `.env.production.example`). For OCI Object Storage, use its
 S3-compatible endpoint (`https://<namespace>.compat.objectstorage.<region>.oraclecloud.com`)
-with a "Customer Secret Key" as the access key pair. Restore drill: download a dump from
-the bucket and `pg_restore` it into a scratch database, as `deploy.sh` rehearsals do.
+with a "Customer Secret Key" as the access key pair.
+
+## Release gate (self-hosted stack)
+
+Every production change goes CHANGELOG → `scripts/release.sh` → `backup-now.sh` →
+`deploy.sh`, and each step checks the one before:
+
+- **`scripts/release.sh`** runs `scripts/check.sh` before tagging: all server tests with
+  the coverage gate, the server tests again as a restricted database role (row-level
+  security enforced, as in production), the web tests with their coverage gate and a
+  production build, and a browser smoke test (`e2e/smoke.mjs`) that signs up on a
+  throwaway app and database, uses the main pages, and checks that a stale tab can't
+  write into another book. It records the pass in the release commit and tag. One-time
+  setup for the browser: `e2e/setup.sh`.
+- **`scripts/local-prod/restore-drill.sh`** (at least every 30 days): downloads the
+  newest backup from the bucket (or the local folder when no bucket is set), restores it
+  into a scratch database, and checks that the `APP_SECRET_KEY` you keep off this machine
+  (it asks you to paste it) decrypts its stored secrets (`node dist/keyCheck.js`). Without
+  that key, bank connections and saved API keys in a restored backup can't be read, so
+  keep a copy in a password manager.
+- **`scripts/local-prod/deploy.sh`** refuses a tag without the recorded checks
+  (`ALLOW_UNCHECKED=1` overrides), and a missing or older-than-30-days drill, or a
+  local-folder drill when a bucket is set (`SKIP_RESTORE_DRILL=1` overrides, e.g. the
+  first deploy that includes the drill, since the drill needs that image). After the app
+  is up it runs `e2e/smoke.mjs --url http://localhost:4100`, a read-only browser check
+  that makes no changes to data.

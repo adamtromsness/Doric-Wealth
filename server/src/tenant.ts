@@ -3,7 +3,7 @@
 // gate routes. Tenant-scoped routes read `hh(req)` and add `book_id = $n` to
 // every query (see routes/accounts.ts for the canonical pattern).
 import type { Request, Response, NextFunction } from 'express';
-import { one, query, pool, requestStore } from './db.js';
+import { one, query, pool, requestStore, BOOK_LOCK, type RequestBinding } from './db.js';
 import { HttpError } from './http.js';
 import { SESSION_COOKIE, readCookie, hashToken } from './auth.js';
 
@@ -75,23 +75,45 @@ export function tenantDb(req: Request, res: Response, next: NextFunction) {
   if (!req.book) return next();
   pool.connect().then(
     (client) => {
-      let released = false;
-      const release = () => {
-        if (released) return;
-        released = true;
-        client.query('RESET ALL').catch(() => {}).finally(() => client.release());
+      const binding: RequestBinding = { client };
+      // Once released, the binding refuses further queries (see db.ts), so code still
+      // running for this request can't use a connection another request now owns.
+      //  - Response finished: reset the tenant settings and return the connection to
+      //    the pool; if the reset fails, discard the connection instead.
+      //  - Client went away before the response finished (aborted): the handler may
+      //    still be mid-query, so discard the connection rather than reuse it.
+      const release = (aborted: boolean) => {
+        if (binding.released) return;
+        binding.released = true;
+        if (aborted) { client.release(true); return; }
+        client.query('SELECT pg_advisory_unlock_all()')
+          .then(() => client.query('RESET ALL'))
+          .then(() => client.release(), (e) => client.release(e));
       };
-      res.on('finish', release);
-      res.on('close', release);
+      res.on('finish', () => release(false));
+      res.on('close', () => release(!res.writableFinished));
       client.query(
-        `SELECT set_config('app.book_id', $1, false), set_config('app.user_id', $2, false)`,
-        [String(req.book!.id), String(req.user?.id ?? '')]
+        `SELECT set_config('app.book_id', $1, false), set_config('app.user_id', $2, false), pg_advisory_lock_shared(${BOOK_LOCK}, $3)`,
+        [String(req.book!.id), String(req.user?.id ?? ''), req.book!.id]
       )
-        .then(() => requestStore.run({ client }, () => next()))
-        .catch((e) => { release(); next(e); });
+        .then(() => requestStore.run(binding, () => next()))
+        .catch((e) => { release(true); next(e); });
     },
     (err) => next(err)
   );
+}
+
+// The active book lives on the session, which every tab shares, so a tab can be showing
+// one book after another tab switched to a different one. The web app sends the book
+// it is showing as X-Book-Id; if that's no longer the active book, refuse (409,
+// code "book_changed") instead of reading or writing the other book. The client then
+// refreshes to the current book. Requests without the header (other clients) pass.
+export function expectedBook(req: Request, _res: Response, next: NextFunction) {
+  const header = req.get('x-book-id');
+  if (!header || !req.book) return next();
+  if (req.method === 'POST' && req.path === '/books/switch') return next(); // that's how the book changes
+  if (Number(header) === req.book.id) return next();
+  next(new HttpError(409, `These books changed in another tab or window. This page has been refreshed to show ${req.book.name}; check your changes and try again.`, 'book_changed'));
 }
 
 // Most data routes need both a user and an active book.

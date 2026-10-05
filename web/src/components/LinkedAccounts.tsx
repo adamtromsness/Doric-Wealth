@@ -471,7 +471,7 @@ export default function LinkedAccounts() {
           <div className="card"><div className="empty">Connect a bank in the Token tab first, then map its accounts.</div></div>
         ) : (
         <>
-          <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>Choose whether to include pending transactions and whether each connection imports on a schedule. Changes save with the button above.</p>
+          <p className="muted" style={{ fontSize: 13, margin: '0 0 10px' }}>Choose whether each connection imports on a schedule. Changes save with the button above. Transactions are imported once they post; pending ones wait until then.</p>
           <div className="card" style={{ display: 'grid', gap: 18 }}>
             {conns.map((c) => {
               const ls = draft.links[c.id];
@@ -480,10 +480,6 @@ export default function LinkedAccounts() {
               return (
                 <div key={c.id}>
                   {conns.length > 1 && <div className="muted" style={{ fontSize: 12, marginBottom: 8, textTransform: 'capitalize' }}>{c.provider}</div>}
-                  <Toggle checked={ls.include_pending} onChange={(v) => setLink(c.id, { include_pending: v })}>
-                    Include pending transactions
-                  </Toggle>
-                  <div className="muted" style={{ fontSize: 12, margin: '2px 0 12px 50px' }}>Pending items can change once they post.</div>
 
                   <Toggle checked={ls.auto_import_enabled} onChange={(v) => setLink(c.id, { auto_import_enabled: v })}>
                     Automatically import on a schedule

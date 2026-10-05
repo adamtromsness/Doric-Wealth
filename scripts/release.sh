@@ -4,6 +4,8 @@
 # app's top bar shows), then commit and tag vX.Y.Z.
 #
 #   scripts/release.sh patch|minor|major
+# Runs the release checks first (scripts/check.sh) and records that they passed in
+# the release commit and tag.
 # Optional: RELEASE_TRAILER='Key: value' appends a trailer to the release commit.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -13,6 +15,11 @@ bump="${1:-}"
 case "$bump" in patch|minor|major) ;; *) die "usage: scripts/release.sh patch|minor|major" ;; esac
 [ "$(git branch --show-current)" = main ] || die "release from main (merge your branches first)."
 [ -z "$(git status --porcelain)" ] || die "working tree is not clean; commit or stash first."
+
+# The release checks must pass on exactly what's being released. deploy.sh refuses a
+# tag that doesn't record them.
+scripts/check.sh || die "release checks failed; nothing was released."
+checked="Release checks passed: server tests (privileged and restricted role), web tests, browser smoke ($(git rev-parse --short HEAD), $(date +%F))"
 
 notes="$(awk '/^## \[Unreleased\]/{f=1; next} /^## \[/{f=0} f' CHANGELOG.md | sed '/^[[:space:]]*$/d')"
 [ -n "$notes" ] || die "nothing under '## [Unreleased]' in CHANGELOG.md; add the changes first."
@@ -27,6 +34,6 @@ git rev-parse -q --verify "refs/tags/v$v" >/dev/null && die "tag v$v already exi
 sed -i "s/^## \[Unreleased\]\$/## [Unreleased]\n\n## [$v] - $(date +%F)/" CHANGELOG.md
 
 git add CHANGELOG.md package.json package-lock.json server/package.json server/package-lock.json web/package.json web/package-lock.json
-git commit -q --cleanup=verbatim -m "Release v$v" -m "$notes" ${RELEASE_TRAILER:+--trailer "$RELEASE_TRAILER"}
-git tag -a --cleanup=verbatim "v$v" -m "v$v" -m "$notes"
+git commit -q --cleanup=verbatim -m "Release v$v" -m "$notes" -m "$checked" ${RELEASE_TRAILER:+--trailer "$RELEASE_TRAILER"}
+git tag -a --cleanup=verbatim "v$v" -m "v$v" -m "$notes" -m "$checked"
 echo "Released v$v. Deploy with scripts/local-prod/deploy.sh; push with: git push origin main v$v"

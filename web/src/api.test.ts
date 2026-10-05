@@ -3,7 +3,7 @@ import {
   money, parseLocalDate, shortDate, todayStr, isHttpUrl, normalizeUrl, isOpenableUrl,
   formatPhone, accountTypeLabel, propertyTypeLabel, disposalTypeLabel, propertyDisposalTypeLabel,
   ACCOUNT_TYPES, LIABILITY_ACCOUNT_TYPES,
-  api, apiStream, apiBlob, apiDownload, setUnauthorizedHandler,
+  api, apiStream, apiBlob, apiDownload, setUnauthorizedHandler, setExpectedBook, setBookChangedHandler, setBookSwitching,
 } from './api';
 
 // ── Pure formatters ────────────────────────────────────────────────────────
@@ -141,6 +141,44 @@ describe('api client', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     setUnauthorizedHandler(null);
+  });
+
+  it('sends the book this tab shows, and reacts when another tab switched books', async () => {
+    const changed = vi.fn();
+    setExpectedBook(4);
+    setBookChangedHandler(changed);
+    fetchMock.mockResolvedValue(mockResponse({ ok: false, status: 409, json: { error: 'These books changed in another tab or window.', code: 'book_changed' } }));
+    await expect(api.post('/accounts', { name: 'X' })).rejects.toThrow('These books changed in another tab');
+    expect(fetchMock.mock.calls[0][1].headers['x-book-id']).toBe('4');
+    expect(changed).toHaveBeenCalledTimes(1);
+    // An ordinary 409 doesn't trigger it, and no header is sent without a book.
+    fetchMock.mockResolvedValue(mockResponse({ ok: false, status: 409, json: { error: 'Conflict' } }));
+    await expect(api.post('/x')).rejects.toThrow('Conflict');
+    expect(changed).toHaveBeenCalledTimes(1);
+    setExpectedBook(null);
+    fetchMock.mockResolvedValue(mockResponse({ json: {} }));
+    await api.get('/y');
+    expect(fetchMock.mock.calls[2][1].headers['x-book-id']).toBeUndefined();
+    setBookChangedHandler(null);
+  });
+
+  it('while the tab changes books, nothing but the session calls is sent', async () => {
+    fetchMock.mockResolvedValue(mockResponse({ json: {} }));
+    setBookSwitching(true);
+    try {
+      await expect(api.post('/accounts', { name: 'Old draft' })).rejects.toThrow('This tab is changing books');
+      await expect(apiStream('/connections/import/stream', {}, () => {})).rejects.toThrow('changing books');
+      await expect(apiBlob('/backup/export')).rejects.toThrow('changing books');
+      await expect(apiDownload('/backup/export', 'x.json')).rejects.toThrow('changing books');
+      expect(fetchMock).not.toHaveBeenCalled();
+      await api.get('/auth/me');
+      await api.post('/books/switch', { book_id: 2 });
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      setBookSwitching(false);
+    }
+    await api.post('/accounts', { name: 'New' });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('GET returns parsed JSON and sends credentials + content-type', async () => {

@@ -168,3 +168,24 @@ test('the sweep deletes expired sessions and spares live ones', async () => {
   assert.equal(after.length, 1, 'the live session survives');
   assert.equal((await client.get('/api/auth/me')).status, 200);
 });
+
+test('no cross-origin access is granted by default, and cross-site writes are blocked', async () => {
+  const { client } = await registerUser(base);
+  // A read from another origin gets no CORS grant (the browser would block it).
+  const r = await fetch(`${base}/api/auth/me`, { headers: { origin: 'https://evil.example', cookie: client.cookie } });
+  assert.equal(r.headers.get('access-control-allow-origin'), null);
+
+  const write = (origin?: string) => fetch(`${base}/api/accounts`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', cookie: client.cookie, ...(origin ? { origin } : {}) },
+    body: JSON.stringify({ name: 'X', type: 'checking' }),
+  });
+  const evil = await write('https://evil.example');
+  assert.equal(evil.status, 403);
+  assert.match((await evil.json()).error, /another website/);
+  assert.equal((await write('https://doric.example.evil.example')).status, 403);
+  assert.equal((await write('null')).status, 403);
+  // Same origin (as the app's own pages send) and no Origin (non-browser) are fine.
+  assert.equal((await write(base)).status, 201);
+  assert.equal((await write()).status, 201);
+});

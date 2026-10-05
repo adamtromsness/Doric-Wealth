@@ -82,7 +82,7 @@ const nav = [
 ];
 
 export default function App() {
-  const { ready, user, activeBook } = useAuth();
+  const { ready, user, activeBook, bookNotice, dismissBookNotice } = useAuth();
 
   if (!ready) {
     return <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', color: 'var(--muted)' }}>Loading…</div>;
@@ -133,6 +133,12 @@ export default function App() {
             <UserMenu />
           </div>
         </div>
+        {bookNotice && (
+          <div className="banner" role="status" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <span>{bookNotice}</span>
+            <button className="ghost" onClick={dismissBookNotice}>Dismiss</button>
+          </div>
+        )}
         <SubscriptionAlert />
         <Suspense fallback={<PageFallback />}>
         <Routes>

@@ -248,8 +248,8 @@ describe('LinkedAccounts', () => {
     renderPage();
     await waitFor(() => expect(screen.getByText('Big Bank')).toBeInTheDocument());
     await user.click(screen.getByRole('button', { name: 'Imports' }));
-    // Toggle include pending.
-    await user.click(screen.getByText('Include pending transactions'));
+    // Pending imports are off for now: no toggle for them.
+    expect(screen.queryByText('Include pending transactions')).toBeNull();
     // Enable scheduled auto-import to reveal frequency/start controls.
     await user.click(screen.getByText('Automatically import on a schedule'));
     expect(screen.getByText('Frequency')).toBeInTheDocument();
@@ -257,7 +257,7 @@ describe('LinkedAccounts', () => {
     expect(screen.getByText('Accounts to auto-import')).toBeInTheDocument();
     // Save the dirty draft.
     await user.click(screen.getByRole('button', { name: 'Save Changes' }));
-    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/connections/1/settings', expect.objectContaining({ include_pending: true })));
+    await waitFor(() => expect(api.post).toHaveBeenCalledWith('/connections/1/settings', expect.objectContaining({ auto_import_enabled: true })));
   });
 
   it('shows the imports empty state without connections', async () => {

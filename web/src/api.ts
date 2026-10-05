@@ -6,25 +6,57 @@ const API_TOKEN = (import.meta as any).env?.VITE_API_TOKEN ?? '';
 let onUnauthorized: (() => void) | null = null;
 export function setUnauthorizedHandler(fn: (() => void) | null) { onUnauthorized = fn; }
 
+// The book this tab is showing, sent as X-Book-Id so the server can refuse a request
+// if another tab has since switched books (409, code "book_changed"). The
+// AuthProvider keeps it current and registers a handler that refreshes to the
+// active book when that happens.
+let expectedBookId: number | null = null;
+export function setExpectedBook(id: number | null) { expectedBookId = id; }
+let onBookChanged: (() => void) | null = null;
+export function setBookChangedHandler(fn: (() => void) | null) { onBookChanged = fn; }
+
+// When this tab changes books it reloads (see AuthProvider). From the moment the change
+// is seen until the page is gone, requests are held back, so nothing begun for the old
+// book (a form, a retry, an action waiting on a download) can reach the new one. The
+// session calls that make the change still go through.
+let switchingBook = false;
+export function setBookSwitching(on: boolean) { switchingBook = on; }
+// Load a page afresh (a separate function so tests can replace it).
+export function reloadAt(path: string) { window.location.assign(path); }
+function holdDuringBookSwitch(path: string) {
+  if (switchingBook && !/^\/(auth\/|books\/switch)/.test(path)) throw new Error('This tab is changing books. Try again in a moment.');
+}
+
+function baseHeaders(): Record<string, string> {
+  return {
+    ...(API_TOKEN ? { 'x-api-token': API_TOKEN } : {}),
+    ...(expectedBookId != null ? { 'x-book-id': String(expectedBookId) } : {}),
+  };
+}
+
 async function req<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  holdDuringBookSwitch(path);
   const res = await fetch(BASE + path, {
     ...opts,
     credentials: 'include', // send the session cookie
     headers: {
       'content-type': 'application/json',
-      ...(API_TOKEN ? { 'x-api-token': API_TOKEN } : {}),
+      ...baseHeaders(),
       ...(opts.headers ?? {}),
     },
   });
   if (!res.ok) {
     if (res.status === 401) onUnauthorized?.();
     let msg = `Request failed (${res.status})`;
+    let code: string | undefined;
     try {
       const body = await res.json();
       if (body?.error) msg = body.error;
+      code = body?.code;
     } catch {
       /* ignore */
     }
+    if (res.status === 409 && code === 'book_changed') onBookChanged?.();
     throw new Error(msg);
   }
   if (res.status === 204) return undefined as T;
@@ -42,10 +74,11 @@ export const api = {
 // POST and read a newline-delimited-JSON (NDJSON) stream, invoking `onEvent` for each
 // parsed line as it arrives. Used for long operations that report live progress.
 export async function apiStream(path: string, body: unknown, onEvent: (ev: any) => void): Promise<void> {
+  holdDuringBookSwitch(path);
   const res = await fetch(BASE + path, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'content-type': 'application/json', ...(API_TOKEN ? { 'x-api-token': API_TOKEN } : {}) },
+    headers: { 'content-type': 'application/json', ...baseHeaders() },
     body: JSON.stringify(body ?? {}),
   });
   if (!res.ok || !res.body) {
@@ -80,13 +113,15 @@ export async function apiStream(path: string, body: unknown, onEvent: (ev: any) 
 // Fetch a path and return its body as a Blob (no browser "Save as"). Used to write a
 // file into a directory the user granted via the File System Access API.
 export async function apiBlob(path: string): Promise<Blob> {
-  const res = await fetch(BASE + path, { credentials: 'include', headers: { ...(API_TOKEN ? { 'x-api-token': API_TOKEN } : {}) } });
+  holdDuringBookSwitch(path);
+  const res = await fetch(BASE + path, { credentials: 'include', headers: { ...baseHeaders() } });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   return res.blob();
 }
 
 export async function apiDownload(path: string, fallbackName: string): Promise<void> {
-  const res = await fetch(BASE + path, { credentials: 'include', headers: { ...(API_TOKEN ? { 'x-api-token': API_TOKEN } : {}) } });
+  holdDuringBookSwitch(path);
+  const res = await fetch(BASE + path, { credentials: 'include', headers: { ...baseHeaders() } });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const cd = res.headers.get('content-disposition') ?? '';
   const m = /filename="?([^"]+)"?/.exec(cd);

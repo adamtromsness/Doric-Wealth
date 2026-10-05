@@ -170,3 +170,16 @@ test('invite-only: the first account on an empty database needs no code; the sec
     await dropDatabase(dbName);
   }
 });
+
+test('privacy config states what this server is set up to do (signed out)', async () => {
+  const c = makeClient(base);
+  const saved = { appBaseUrl: config.appBaseUrl, backupKeepDays: config.backupKeepDays, offsiteBackups: config.offsiteBackups, contactEmail: config.contactEmail };
+  try {
+    Object.assign(config, { appBaseUrl: 'https://app.example.com', backupKeepDays: 30, offsiteBackups: true, contactEmail: 'help@example.com' });
+    assert.deepEqual((await c.get('/api/auth/privacy')).body, { contact_email: 'help@example.com', https: true, backup_keep_days: 30, offsite_backups: true });
+    Object.assign(config, { appBaseUrl: 'http://localhost:4100', backupKeepDays: null, offsiteBackups: false, contactEmail: '' });
+    assert.deepEqual((await c.get('/api/auth/privacy')).body, { contact_email: null, https: false, backup_keep_days: null, offsite_backups: false });
+  } finally {
+    Object.assign(config, saved);
+  }
+});

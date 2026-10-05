@@ -77,7 +77,7 @@ test('simplefin staging: sign-maps direction and dedups by external id', async (
   }
 });
 
-test('simplefin staging: a pending transaction (posted=0) uses transacted_at, not epoch 1970', async () => {
+test('simplefin staging: a pending transaction (posted=0) is left for a later sync, once it posts', async () => {
   const { client, bookId } = await registerUser(base);
   const acct = (await client.post('/api/accounts', { name: 'Chk', type: 'checking' })).body;
   const db = testDbClient();
@@ -97,8 +97,8 @@ test('simplefin staging: a pending transaction (posted=0) uses transacted_at, no
     }];
     const b = (await db.query(`INSERT INTO import_batches (book_id, source, total_rows) VALUES ($1,'simplefin',0) RETURNING id`, [bookId])).rows[0];
     await stageSimplefinTxns(db as any, bookId, link.id, b.id, payload, new Map([['a-1', acct.id]]));
-    const s = (await db.query(`SELECT to_char(txn_date,'YYYY-MM-DD') AS d FROM staged_transactions WHERE book_id = $1 AND external_id = 'pend-1'`, [bookId])).rows[0];
-    assert.equal(s.d, '2023-11-14', 'pending txn dated from transacted_at, not 1970-01-01');
+    const s = (await db.query(`SELECT 1 FROM staged_transactions WHERE book_id = $1 AND external_id = 'pend-1'`, [bookId])).rows;
+    assert.equal(s.length, 0, 'pending imports are off: a pending charge is not staged (it would never get its posted amount and date)');
   } finally {
     await db.end();
   }

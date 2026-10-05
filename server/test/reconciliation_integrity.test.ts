@@ -158,3 +158,81 @@ test('a book with a completed reconciliation can be backed up and restored', asy
   const sessions = (await client.get(`${R}?account_id=`)).body;
   assert.equal(sessions.filter((x: any) => x.status === 'completed').length, 1);
 });
+
+test('a reconciled loan payment: split changes that move its principal are refused; other split edits pass', async () => {
+  const { client } = await registerUser(base);
+  const checking = (await client.post('/api/accounts', { name: 'Checking', type: 'checking', opening_balance: 1000 })).body.id;
+  const loan = (await client.post('/api/accounts', { name: 'Car Loan', type: 'loan', is_liability: true, opening_balance: 10000 })).body.id;
+  const body = (splits: any[]) => ({
+    amount: 400, account_id: checking, transfer_account_id: loan, direction: 'transfer',
+    txn_date: '2026-09-10', posted_date: '2026-09-10', splits,
+  });
+  const split = (principal: number, notes = '') => [
+    { amount: principal, is_principal: true, notes },
+    { amount: 400 - principal, is_principal: false },
+  ];
+  const pay = (await client.post('/api/transactions', body(split(300)))).body;
+  const { s, done } = await reconcile(client, loan, [pay.id], 9700);
+  assert.equal(done.status, 200, 'owed 10000 - principal 300 = 9700');
+
+  const more = await client.put(`/api/transactions/${pay.id}`, body(split(350)));
+  assert.equal(more.status, 409);
+  assert.match(more.body.error, /completed reconciliation/);
+  // Dropping the breakdown would count the whole 400 as principal.
+  assert.equal((await client.put(`/api/transactions/${pay.id}`, body([]))).status, 409);
+  // Same principal, different notes: fine.
+  assert.equal((await client.put(`/api/transactions/${pay.id}`, body(split(300, 'September')))).status, 200);
+  const loanRow = (await client.get(`/api/accounts/${loan}`)).body;
+  assert.equal(Number(loanRow.posted_balance ?? loanRow.balance), 9700, 'balance unchanged by the refused edits');
+
+  await client.put(`${R}/${s.id}`, { status: 'open' });
+  assert.equal((await client.put(`/api/transactions/${pay.id}`, body(split(350)))).status, 200, 'editable after reopening');
+});
+
+test('an account with a completed reconciliation keeps its liability flag and opening balance', async () => {
+  const { client, acct, pay } = await setup();
+  const { s } = await reconcile(client, acct, [pay.id], 600);
+  const flip = await client.put(`/api/accounts/${acct}`, { is_liability: true });
+  assert.equal(flip.status, 409);
+  assert.match(flip.body.error, /completed reconciliation/);
+  assert.equal((await client.put(`/api/accounts/${acct}`, { opening_balance: 50 })).status, 409);
+  assert.equal((await client.put(`/api/accounts/${acct}`, { name: 'Everyday Checking' })).status, 200);
+  await client.put(`${R}/${s.id}`, { status: 'open' });
+  assert.equal((await client.put(`/api/accounts/${acct}`, { opening_balance: 50 })).status, 200);
+});
+
+test('completing rechecks cleared items: not cleared in another completed session, posted by the statement end', async () => {
+  const { client, acct, pay, groceries } = await setup();
+  // Two open sessions both clear the paycheck; the first to complete wins.
+  const a = (await client.post(R, { account_id: acct, statement_end: '2026-09-30' })).body;
+  const b = (await client.post(R, { account_id: acct, statement_end: '2026-09-30' })).body;
+  assert.equal((await client.post(`${R}/${a.id}/items`, { transaction_id: pay.id })).status, 201);
+  assert.equal((await client.post(`${R}/${b.id}/items`, { transaction_id: pay.id })).status, 201);
+  assert.equal((await client.put(`${R}/${a.id}`, { status: 'completed', statement_balance: 600 })).status, 200);
+  const second = await client.put(`${R}/${b.id}`, { status: 'completed', statement_balance: 600 });
+  assert.equal(second.status, 409);
+  assert.match(second.body.error, /1 already cleared in another completed reconciliation/);
+  assert.equal((await client.get(`${R}/${b.id}`)).body.status, 'open');
+
+  // A cleared item whose posted date moved past the statement end is refused at completion.
+  const c = (await client.post(R, { account_id: acct, statement_end: '2026-09-30', opening_balance: 600 })).body;
+  assert.equal((await client.post(`${R}/${c.id}/items`, { transaction_id: groceries.id })).status, 201);
+  assert.equal((await client.put(`/api/transactions/${groceries.id}`, {
+    amount: 80.25, account_id: acct, direction: 'expense', txn_date: '2026-09-05', posted_date: '2026-10-02', merchant: 'Shop',
+  })).status, 200);
+  const late = await client.put(`${R}/${c.id}`, { status: 'completed', statement_balance: 519.75 });
+  assert.equal(late.status, 409);
+  assert.match(late.body.error, /1 posted after the statement end date/);
+});
+
+test('two sessions completing at once with the same transaction: exactly one succeeds', async () => {
+  const { client, acct, pay } = await setup();
+  const ids: number[] = [];
+  for (let i = 0; i < 2; i++) {
+    const s = (await client.post(R, { account_id: acct, statement_end: '2026-09-30' })).body;
+    assert.equal((await client.post(`${R}/${s.id}/items`, { transaction_id: pay.id })).status, 201);
+    ids.push(s.id);
+  }
+  const results = await Promise.all(ids.map((id) => client.put(`${R}/${id}`, { status: 'completed', statement_balance: 600 })));
+  assert.deepEqual(results.map((r: any) => r.status).sort(), [200, 409]);
+});

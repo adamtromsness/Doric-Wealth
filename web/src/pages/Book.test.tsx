@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import Book from './Book';
@@ -12,8 +12,9 @@ import { api } from '../api';
 
 const refresh = vi.fn();
 let activeBook: any;
+let authUser: any = { id: 1 };
 vi.mock('../auth', () => ({
-  useAuth: () => ({ activeBook, refresh }),
+  useAuth: () => ({ user: authUser, activeBook, refresh }),
   displayName: (u: any) => u?.name ?? '',
 }));
 
@@ -36,6 +37,7 @@ describe('Book page', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     activeBook = { id: 1, name: 'Home', role: 'owner' };
+    authUser = { id: 1 };
     (api.get as any).mockImplementation((path: string) => Promise.resolve(fixtures[path] ?? []));
     (api.post as any).mockResolvedValue({});
     (api.put as any).mockResolvedValue({});
@@ -154,5 +156,66 @@ describe('Book page', () => {
     activeBook = undefined;
     renderPage();
     await waitFor(() => expect(screen.getByText('Books')).toBeInTheDocument());
+  });
+
+  describe('removing members and invite limits', () => {
+    const rowOf = (text: string) => screen.getByText(text).closest('tr') as HTMLElement;
+
+    it('an owner can remove a member (after confirming); the last owner has no button', async () => {
+      const user = userEvent.setup();
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      renderPage();
+      await screen.findByText('bo@b.com');
+      expect(within(rowOf('ada@b.com')).queryByRole('button')).toBeNull(); // only owner: can't leave
+      await user.click(within(rowOf('bo@b.com')).getByRole('button', { name: 'Remove' }));
+      expect(confirmSpy).toHaveBeenCalledWith(expect.stringMatching(/Remove bo@b.com from Home\? They'll lose access right away\./));
+      expect(api.del).toHaveBeenCalledWith('/books/1/members/2');
+      confirmSpy.mockRestore();
+    });
+
+    it('does nothing when the removal is not confirmed', async () => {
+      const user = userEvent.setup();
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+      renderPage();
+      await screen.findByText('bo@b.com');
+      await user.click(within(rowOf('bo@b.com')).getByRole('button', { name: 'Remove' }));
+      expect(api.del).not.toHaveBeenCalled();
+      confirmSpy.mockRestore();
+    });
+
+    it('a member sees only a Leave button on their own row, and leaving refreshes', async () => {
+      const user = userEvent.setup();
+      activeBook = { id: 1, name: 'Home', role: 'member' };
+      authUser = { id: 2 };
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      renderPage();
+      await screen.findByText('bo@b.com');
+      expect(within(rowOf('ada@b.com')).queryByRole('button')).toBeNull();
+      await user.click(within(rowOf('bo@b.com')).getByRole('button', { name: 'Leave' }));
+      expect(api.del).toHaveBeenCalledWith('/books/1/members/2');
+      await waitFor(() => expect(refresh).toHaveBeenCalled());
+      confirmSpy.mockRestore();
+    });
+
+    it('shows a removal error', async () => {
+      const user = userEvent.setup();
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+      (api.del as any).mockRejectedValue(new Error("That's the only owner of these books, so they can't be removed."));
+      renderPage();
+      await screen.findByText('bo@b.com');
+      await user.click(within(rowOf('bo@b.com')).getByRole('button', { name: 'Remove' }));
+      expect(await screen.findByText(/only owner of these books/)).toBeInTheDocument();
+      confirmSpy.mockRestore();
+    });
+
+    it('invites show their use limit and expiry, and explain the defaults', async () => {
+      fixtures['/books/1/invites'] = [{ ...invites[0], max_uses: 1, uses: 0, expires_at: '2026-10-12T17:00:00Z' }];
+      renderPage();
+      expect(await screen.findByText('0 / 1')).toBeInTheDocument();
+      expect(screen.getByRole('columnheader', { name: 'Expires' })).toBeInTheDocument();
+      expect(screen.getByText('Oct 12, 2026')).toBeInTheDocument();
+      expect(screen.getByText(/Each link works once and expires after 7 days/)).toBeInTheDocument();
+      fixtures['/books/1/invites'] = invites;
+    });
   });
 });

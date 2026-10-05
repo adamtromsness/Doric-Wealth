@@ -135,7 +135,8 @@ describe('UserMenu', () => {
       await user.click(screen.getByTitle('Account & settings'));
       await user.click(screen.getByRole('menuitem', { name: /Rental/ }));
       expect(switchBook).toHaveBeenCalledWith(2);
-      await waitFor(() => expect(assignSpy).toHaveBeenCalledWith('/'));
+      // switchBook reloads onto the new book itself (tested in auth.test.tsx).
+      expect(assignSpy).not.toHaveBeenCalled();
     });
   });
 });

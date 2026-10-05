@@ -56,22 +56,12 @@ async function subscriptionIdsForTransaction(client: any, txnId: number): Promis
   return r.rows.map((x: any) => Number(x.sub_id));
 }
 
-// When an expense is categorized to a utility account's managed category (on the
-// transaction or a split), record it as a payment against that account's oldest
-// open invoice — accumulating toward the balance and closing the invoice once
-// covered. Idempotent: a transaction's prior payments are cleared and re-applied
-// each time, so editing its amount/category just re-derives its contribution.
-export async function applyTransactionToInvoices(client: any, txnId: number, bookId: number): Promise<void> {
-  // Invoices this transaction previously paid — re-derive their state afterward.
-  const prev = (await client.query(`SELECT DISTINCT invoice_id FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2`, [txnId, bookId])).rows.map((x: any) => Number(x.invoice_id));
-  await client.query(`DELETE FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2`, [txnId, bookId]);
-  const affected = new Set<number>(prev);
-
-  // Defense in depth: every tenant table that HAS a book_id (transactions, categories,
-  // transaction_splits) is filtered explicitly so this can't reach across books even
-  // if RLS is ever misconfigured. utility_invoices/lines have no book_id column — they
-  // are reached only via acct_id, which is itself book-scoped through c.book_id here.
-  const assoc = (await client.query(
+// The utility accounts a transaction pays through its categories (on the transaction
+// or a split), with the amount for each. Defense in depth: every tenant table that HAS
+// a book_id (transactions, categories, transaction_splits) is filtered explicitly so
+// this can't reach across books even if RLS is ever misconfigured.
+async function utilityAssociations(client: any, txnId: number, bookId: number): Promise<{ acct_id: number; amount: string }[]> {
+  return (await client.query(
     `SELECT c.source_id AS acct_id, t.amount AS amount
        FROM transactions t JOIN categories c ON c.id = t.category_id
       WHERE t.id = $1 AND t.book_id = $2 AND c.book_id = $2 AND t.direction = 'expense'
@@ -81,18 +71,62 @@ export async function applyTransactionToInvoices(client: any, txnId: number, boo
        FROM transaction_splits s JOIN categories c ON c.id = s.category_id
        JOIN transactions t ON t.id = s.transaction_id
       WHERE s.transaction_id = $1 AND s.book_id = $2 AND c.book_id = $2 AND t.direction = 'expense'
-        AND c.managed AND c.source_kind = 'utility' AND c.source_id IS NOT NULL`,
+        AND c.managed AND c.source_kind = 'utility' AND c.source_id IS NOT NULL
+      ORDER BY 1, 2`,
     [txnId, bookId]
-  )).rows as { acct_id: number; amount: string }[];
+  )).rows;
+}
 
-  if (assoc.length) {
-    const txn = (await client.query(`SELECT txn_date FROM transactions WHERE id = $1 AND book_id = $2`, [txnId, bookId])).rows[0];
+// What a transaction's invoice payments depend on: its direction, amount, and utility
+// categories. Capture it before an edit and pass it to applyTransactionToInvoices, so
+// an edit that changes none of these (merchant, notes, dates…) leaves payments alone.
+export async function invoicePaymentBasis(client: any, txnId: number, bookId: number): Promise<string> {
+  const t = (await client.query(`SELECT direction, amount FROM transactions WHERE id = $1 AND book_id = $2`, [txnId, bookId])).rows[0];
+  return JSON.stringify([t?.direction ?? null, t ? Number(t.amount) : null, await utilityAssociations(client, txnId, bookId)]);
+}
+
+// Keep a transaction's utility-invoice payments in line with the transaction.
+//  - Unchanged basis (see invoicePaymentBasis): nothing to do. Payments stay as they
+//    are, including ones linked by hand and ones spread over several invoices.
+//  - Categorized to a utility account (on the transaction or a split): its payments are
+//    re-derived. Each amount goes to the invoices it paid before, then an invoice whose
+//    balance it matches exactly, then the oldest open ones, until it's used up.
+//  - Not categorized to a utility, with payments linked by hand: they're kept, trimmed
+//    so they never add up to more than the transaction (newest links give way first),
+//    and removed if it's no longer an expense.
+// Invoices whose payments changed have their paid state recomputed.
+export async function applyTransactionToInvoices(client: any, txnId: number, bookId: number, basisBefore?: string): Promise<void> {
+  if (basisBefore !== undefined && basisBefore === await invoicePaymentBasis(client, txnId, bookId)) return;
+  const prev = (await client.query(
+    `SELECT id, invoice_id, amount FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2 ORDER BY id`,
+    [txnId, bookId]
+  )).rows as { id: number; invoice_id: number; amount: string }[];
+  const affected = new Set<number>(prev.map((x) => Number(x.invoice_id)));
+  const txn = (await client.query(`SELECT txn_date, direction, amount FROM transactions WHERE id = $1 AND book_id = $2`, [txnId, bookId])).rows[0];
+  const assoc = await utilityAssociations(client, txnId, bookId);
+
+  if (!assoc.length) {
+    if (txn?.direction !== 'expense') {
+      await client.query(`DELETE FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2`, [txnId, bookId]);
+    } else {
+      let left = Number(txn.amount);
+      for (const p of prev) {
+        const keep = Math.round(Math.min(Number(p.amount), Math.max(left, 0)) * 100) / 100;
+        left -= keep;
+        if (keep <= 0) await client.query(`DELETE FROM utility_invoice_payments WHERE id = $1 AND book_id = $2`, [p.id, bookId]);
+        else if (keep !== Number(p.amount)) await client.query(`UPDATE utility_invoice_payments SET amount = $2 WHERE id = $1 AND book_id = $3`, [p.id, keep, bookId]);
+      }
+    }
+  } else {
+    await client.query(`DELETE FROM utility_invoice_payments WHERE transaction_id = $1 AND book_id = $2`, [txnId, bookId]);
     const near = (x: number, y: number) => Math.abs(x - y) <= 0.01;
-    const prevSet = new Set(prev);
+    const prevOrder = [...new Set(prev.map((x) => Number(x.invoice_id)))];
 
     for (const a of assoc) {
-      const pay = Number(a.amount);
-      // Open invoices for this account, with their outstanding balance (total minus payments so far).
+      let remaining = Number(a.amount);
+      // Open invoices for this account, with their outstanding balance (total minus
+      // payments so far). utility_invoices/lines are reached only via acct_id, which is
+      // book-scoped through the category above.
       const candidates = (await client.query(
         `SELECT i.id, i.late_total,
                 COALESCE((SELECT SUM(l.amount) FROM utility_invoice_lines    l WHERE l.invoice_id = i.id AND l.book_id = $2), 0) AS total,
@@ -104,22 +138,28 @@ export async function applyTransactionToInvoices(client: any, txnId: number, boo
         [a.acct_id, bookId]
       )).rows as { id: number; late_total: string | null; total: string; paid_amt: string }[];
       const open = candidates
-        .map((c) => ({ id: c.id, late_total: c.late_total, outstanding: Number(c.total) - Number(c.paid_amt) }))
+        .map((c) => ({ id: Number(c.id), late_total: c.late_total, outstanding: Number(c.total) - Number(c.paid_amt) }))
         .filter((c) => c.outstanding > 0.005);
-      if (!open.length) continue;
+      const exact = open.find((c) => near(remaining, c.outstanding) || (c.late_total != null && near(remaining, Number(c.late_total))));
+      const ordered = [
+        ...prevOrder.map((id) => open.find((c) => c.id === id)).filter((c): c is (typeof open)[number] => !!c),
+        ...(exact ? [exact] : []),
+        ...open,
+      ].filter((c, i, all) => all.indexOf(c) === i);
 
-      // Prefer the invoice this txn paid before, then an exact-balance match, else the oldest open one.
-      let pick = open.find((c) => prevSet.has(c.id))
-        ?? open.find((c) => near(pay, c.outstanding) || (c.late_total != null && near(pay, Number(c.late_total))))
-        ?? open[0];
-
-      const credit = Math.min(pay, pick.outstanding);
-      await client.query(
-        `INSERT INTO utility_invoice_payments (invoice_id, transaction_id, amount, paid_date, auto_txn, book_id)
-         VALUES ($1,$2,$3,$4,false,$5)`,
-        [pick.id, txnId, credit, txn?.txn_date ?? null, bookId]
-      );
-      affected.add(pick.id);
+      for (const inv of ordered) {
+        if (remaining <= 0.005) break;
+        const credit = Math.round(Math.min(remaining, inv.outstanding) * 100) / 100;
+        if (credit <= 0) continue;
+        await client.query(
+          `INSERT INTO utility_invoice_payments (invoice_id, transaction_id, amount, paid_date, auto_txn, book_id)
+           VALUES ($1,$2,$3,$4,false,$5)`,
+          [inv.id, txnId, credit, txn?.txn_date ?? null, bookId]
+        );
+        inv.outstanding -= credit;
+        remaining -= credit;
+        affected.add(inv.id);
+      }
     }
   }
 
@@ -533,8 +573,10 @@ transactions.put(
     const bookId = hh(req);
     const row = await withTransaction(async (client) => {
       await assertRefsOwned(client, bookId, b);
-      // Capture existing subscription associations before this edit changes them.
+      // Capture existing subscription associations and what its invoice payments
+      // depend on before this edit changes them.
       const oldSubs = await subscriptionIdsForTransaction(client, Number(req.params.id));
+      const basis = await invoicePaymentBasis(client, Number(req.params.id), bookId);
       const r = (await client.query(
         `UPDATE transactions SET
            account_id = $2, category_id = $3, transfer_account_id = $4,
@@ -563,9 +605,9 @@ transactions.put(
         const added = (await subscriptionIdsForTransaction(client, r.id)).filter((id) => !oldSubs.includes(id));
         await advanceSubscriptionDueDates(client, added, bookId);
       }
-      // Re-derive any utility-invoice payment this transaction represents (the
-      // call clears its prior payments first, so removing the category reopens).
-      await applyTransactionToInvoices(client, r.id, bookId);
+      // Bring its utility-invoice payments in line, if the edit changed what they
+      // depend on (removing the utility category reopens the invoice).
+      await applyTransactionToInvoices(client, r.id, bookId, basis);
       return r;
     });
     res.json(row);
@@ -581,14 +623,15 @@ transactions.post(
     const bookId = hh(req);
     const row = await withTransaction(async (client) => {
       await assertRefsOwned(client, bookId, { category_id: categoryId });
+      const basis = await invoicePaymentBasis(client, Number(req.params.id), bookId);
       const r = (await client.query(`UPDATE transactions SET category_id = $2 WHERE id = $1 AND book_id = $3 RETURNING *`, [req.params.id, categoryId, bookId])).rows[0];
       if (!r) throw new HttpError(404, 'Transaction not found');
       // NOTE: this endpoint only changes the category, never the subscription tags, so
       // it must NOT advance subscription due dates — doing so unconditionally drifted
       // next_due_date forward on every call (and on double-click). Tag-driven advancing
       // happens in PUT (for newly-added subs only). Re-derive utility-invoice payments
-      // though: that IS category-driven and is idempotent (clears + re-applies).
-      await applyTransactionToInvoices(client, r.id, bookId);
+      // though: that IS category-driven.
+      await applyTransactionToInvoices(client, r.id, bookId, basis);
       return r;
     });
     res.json(row);

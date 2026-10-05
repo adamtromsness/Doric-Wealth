@@ -14,6 +14,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 
 ## [Unreleased]
 
+### Added
+- **My Books → Members** has **Remove** (for owners and admins) and **Leave** buttons. Removing someone ends their access on their next action. The last owner can't be removed or leave.
+- **Account deletion** for operators: `deleteAccount.js` (locally `scripts/local-prod/delete-account.sh`) deletes a person's account and the books only they belong to, and removes them from shared books. It shows what it will do first, and a shared book they solely own needs a new owner named.
+- **Release checks:** every release now runs all tests (including as a restricted database role, like production) and a browser smoke test before it's tagged, and deploys refuse a release without them. Deploys also require a recent **restore drill** (`scripts/local-prod/restore-drill.sh`), which restores the newest off-machine backup into a scratch database and proves the `APP_SECRET_KEY` you keep elsewhere can read it. After deploying, a read-only browser check confirms the app loads.
+- On start-up, the server now checks that `APP_SECRET_KEY` still matches the database's stored secrets and logs a clear error if not.
+
+### Changed
+- If you switch books in one tab, other open tabs follow to that book instead of saving into it unexpectedly. A change made in a tab that was still showing the old book is stopped; that tab then reloads onto the new book's dashboard with a note saying so. Anything unsaved there is cleared, and anything it was still doing (such as a delete waiting for its safety download) is stopped, so it can't end up in the wrong book. Switching books in the same tab reloads it too.
+- **Privacy** page: it now describes the background work you can turn on (scheduled bank imports and automatic property values), explains what deleting an account removes and how long deleted data stays in backups, and states HTTPS and the backup schedule only when this server is set up that way.
+- **Bank imports (SimpleFIN)** bring in transactions once they post. Pending ones are left until then, and the **Include pending transactions** option is gone for now. Before, a pending charge was imported as final, so its posted amount and date never arrived.
+- **Invite links** now work once and expire after 7 days by default, and the invite list shows each link's use count and expiry date. Before, links worked any number of times until revoked.
+
+### Fixed
+- **Bank balances from SimpleFIN** are now dated to when your bank measured them, in your time zone, instead of when Doric synced. Before, transactions that posted between those two times could be left out of the account balance.
+- **Reconciliations:** a completed reconciliation now also locks the principal portion of loan payments in it (their split lines), and the account's liability setting and opening balance, until it's reopened. Before, editing a payment's split could change a reconciled loan balance.
+- **Reconciliations:** completing one now rechecks every cleared transaction: it must still be posted, by the statement end date, in that account, and not already reconciled in another completed reconciliation for the account, including one completed at the same moment.
+- Requests cut off by the browser (for example, when you move to another page quickly) no longer log server errors.
+- **Restoring a backup** (My Data → Snapshots) now reconnects everything to the restored records: transaction tags for vehicles, properties, tags and subscriptions, insurance policies, utility and subscription categories, asset maintenance linked to a transaction, AI analyses, and budget headings. Before, these could point at the wrong record or at nothing after a restore.
+- **Restoring part of a backup** (some data sets only) no longer damages data outside it. The preview now lists the data sets it replaces and how many current records they hold, and a restore is refused, with the reason, when records outside it point at what it replaces (for example, transactions at accounts). Links from restored records to records the book still has are kept; a record whose required link can't be restored (for example, a transaction's vehicle tag when neither the backup nor the book has that vehicle) stops the restore instead of being left out, and links that will be dropped are listed in the preview. Other changes to the book wait while a restore runs, so nothing can slip in between its checks and the replace. Before, such a restore could detach transactions from their accounts or bank links from their accounts.
+- **Utility bills:** linking an existing transaction as a bill's payment now counts only what that transaction actually paid, can't reuse the same payment across bills beyond its amount, and only accepts expenses.
+- **Utility bills:** editing a bill's payment transaction (its merchant, notes, dates and so on) no longer undoes its bill payments. Before, a payment covering several bills could leave all but one unpaid. Changing its amount or utility category re-applies it, across several open bills when it covers more than one.
+- **Utility bills:** marking a bill paid now records the payment as posted on the paid date, so the account balance reflects it. Before, the payment sat in Pending.
+
 ## [1.8.0] - 2026-10-05
 
 ### Added
