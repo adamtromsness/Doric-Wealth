@@ -25,15 +25,19 @@ test('the check value is written once, then matches the same key and not another
 });
 
 test('verifyKey checks every stored secret; the CLI reports and --reset adopts a new key', async () => {
+  // The test database is shared: other tests leave secrets (some deliberately
+  // unreadable), so compare against what was there before this test's own.
+  const before = await verifyKey(pool);
   const { bookId } = await registerUser(base);
   await pool.query(`INSERT INTO institution_links (book_id, provider, access_url_enc, status) VALUES ($1, 'simplefin', $2, 'active')`, [bookId, encryptSecret('https://u:p@bridge.simplefin.org/simplefin')]);
   await pool.query(`UPDATE books SET rentcast_api_key = $2 WHERE id = $1`, [bookId, 'enc1:' + encryptSecret('rc-key')]);
 
   const good = await verifyKey(pool);
   assert.equal(good.check, 'ok');
-  assert.equal(good.ok, true);
-  assert.ok(good.secrets['bank connections'].total >= 1);
-  assert.equal(good.secrets['RentCast keys'].failed, 0);
+  for (const name of ['bank connections', 'RentCast keys']) {
+    assert.equal(good.secrets[name].total, before.secrets[name].total + 1, `${name}: this test's secret was checked`);
+    assert.equal(good.secrets[name].failed, before.secrets[name].failed, `${name}: and it decrypts`);
+  }
 
   const out: string[] = [];
   const other = 'a-completely-different-secret-key-0123456789';
