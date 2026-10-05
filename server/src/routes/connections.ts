@@ -87,6 +87,16 @@ async function recordHoldings(
 // synced snapshot for the same date so re-syncs stay idempotent). SimpleFIN reports
 // a liability (credit card / loan) balance as negative when money is owed; the app
 // stores a liability anchor as the positive amount owed, so we negate for liabilities.
+// The book owner's IANA timezone (null → UTC), for turning provider timestamps into
+// calendar dates.
+async function bookOwnerTimezone(client: { query: (text: string, params: any[]) => Promise<any> }, bookId: number): Promise<string | null> {
+  return (await client.query(
+    `SELECT u.timezone FROM memberships m JOIN users u ON u.id = m.user_id
+      WHERE m.book_id = $1 ORDER BY (m.role = 'owner') DESC, m.created_at LIMIT 1`,
+    [bookId]
+  )).rows[0]?.timezone ?? null;
+}
+
 async function recordSyncedBalance(
   client: { query: (text: string, params: any[]) => Promise<any> },
   bookId: number,
@@ -97,7 +107,12 @@ async function recordSyncedBalance(
   const acct = (await client.query(`SELECT is_liability FROM accounts WHERE id = $1 AND book_id = $2`, [accountId, bookId])).rows[0];
   if (!acct) return;
   const snapshotBalance = round2(acct.is_liability ? -balance : balance); // owed amount is stored positive
-  const asOf = new Date(balanceDateEpoch * 1000).toISOString().slice(0, 10);
+  // Date the snapshot when the bank measured the balance (its balance-date), as a
+  // calendar day in the book owner's timezone, the same way imported transactions are
+  // dated. Balances then add transactions posted after that day (ACCOUNT_BALANCES),
+  // so a balance reported a few days ago still yields today's balance; dating it to
+  // the sync instead would drop everything posted between the two.
+  const asOf = dateInTz(balanceDateEpoch * 1000, await bookOwnerTimezone(client, bookId));
   await client.query(
     `INSERT INTO account_balances (account_id, balance, as_of, book_id)
      VALUES ($1, $2, $3, $4)
@@ -138,11 +153,7 @@ export async function stageSimplefinTxns(
   // The provider sends epoch timestamps; convert them to calendar dates in the book
   // owner's timezone (not the server's UTC day), so a transaction near midnight isn't
   // dated a day off for users west of UTC. Fetched once (null → UTC).
-  const ownerTz: string | null = (await client.query(
-    `SELECT u.timezone FROM memberships m JOIN users u ON u.id = m.user_id
-      WHERE m.book_id = $1 ORDER BY (m.role = 'owner') DESC, m.created_at LIMIT 1`,
-    [bookId]
-  )).rows[0]?.timezone ?? null;
+  const ownerTz = await bookOwnerTimezone(client, bookId);
 
   // Prefetch once to avoid an N+1 across (potentially thousands of) payload rows:
   //   (a) every provider id already known for this book (committed / staged / consumed)
@@ -178,13 +189,11 @@ export async function stageSimplefinTxns(
       [a.balance ?? null, a['balance-date'] ?? null, linkId, a.id, bookId]
     );
 
-    // Record the bank's authoritative balance as a snapshot dated to the pull (nowS),
-    // not the bank's balance-date — so a sync immediately brings the account's current
-    // balance up to the latest reported figure even when the bank's balance-date lags.
-    // (recordSyncedBalance handles the asset vs. liability sign convention.) The guard
-    // still requires a real balance reading (balance + balance-date present).
+    // Record the bank's balance as a snapshot dated to when the bank measured it (its
+    // balance-date; see recordSyncedBalance). Requires a real reading: a balance and
+    // its balance-date. (recordSyncedBalance handles the liability sign convention.)
     if (a.balance != null && a['balance-date'] != null && Number.isFinite(Number(a.balance))) {
-      await recordSyncedBalance(client, bookId, accountId, Number(a.balance), nowS);
+      await recordSyncedBalance(client, bookId, accountId, Number(a.balance), Number(a['balance-date']));
       balances.push({ name: a.name, balance: Number(a.balance), currency: a.currency || 'USD' });
     }
     // Replace this account's holdings/composition when the provider reports positions.

@@ -22,6 +22,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), [Semantic Vers
 - **Invite links** now work once and expire after 7 days by default, and the invite list shows each link's use count and expiry date. Before, links worked any number of times until revoked.
 
 ### Fixed
+- **Bank balances from SimpleFIN** are now dated to when your bank measured them, in your time zone, instead of when Doric synced. Before, transactions that posted between those two times could be left out of the account balance.
 - **Utility bills:** linking an existing transaction as a bill's payment now counts only what that transaction actually paid, can't reuse the same payment across bills beyond its amount, and only accepts expenses.
 - **Utility bills:** marking a bill paid now records the payment as posted on the paid date, so the account balance reflects it. Before, the payment sat in Pending.
 
