@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer, stopServer, registerUser } from './helpers.js';
+import { startServer, stopServer, registerUser, testDbClient } from './helpers.js';
 
 let base: string;
 before(async () => { base = await startServer(); });
@@ -314,4 +314,50 @@ test('marking a bill paid records a posted payment on the paid date', async () =
   const pay = list.posted.find((t: any) => t.description === 'Utility payment');
   assert.equal(String(pay.posted_date).slice(0, 10), '2026-07-15');
   assert.equal(Number((await client.get(`/api/accounts/${acct}`)).body.posted_balance), 455, 'the posted balance reflects the payment');
+});
+
+test('editing a bill payment keeps its invoice payments unless the edit changes what it paid', async () => {
+  const { client, bookId } = await registerUser(base);
+  const acct = (await client.post('/api/accounts', { name: 'Checking', type: 'checking' })).body.id;
+  const gas = (await client.post('/api/utilities/accounts', { name: 'Gas', utility_type: 'gas' })).body.id;
+  const bill = async (amount: number, payment_transaction_id?: number) => (await client.post('/api/utilities/invoices', {
+    provider: 'Gas Co', account_id: acct, paid: payment_transaction_id != null, payment_transaction_id,
+    lines: [{ amount, utility_account_id: gas, description: 'Gas' }],
+  })).body.id;
+  const paid = async (id: number) => (await client.get('/api/utilities/invoices')).body.find((i: any) => i.id === id).paid;
+  const edit = (id: number, changes: Record<string, unknown>) => client.put(`/api/transactions/${id}`, {
+    amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-02', posted_date: '2026-07-02', merchant: 'Gas Co', ...changes,
+  });
+
+  // Codex's case: a $60 payment linked by hand to a $40 and a $20 bill. Changing only
+  // its merchant used to drop the $20 bill's payment.
+  const sixty = (await client.post('/api/transactions', { amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-02', posted_date: '2026-07-02', merchant: 'Gas Co' })).body.id;
+  const b40 = await bill(40, sixty);
+  const b20 = await bill(20, sixty);
+  assert.deepEqual([await paid(b40), await paid(b20)], [true, true]);
+  assert.equal((await edit(sixty, { merchant: 'Gas Company', description: 'July' })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20)], [true, true], 'an unrelated edit keeps both payments');
+  // Lowering the amount trims the newest link; it's no longer enough for the $20 bill.
+  assert.equal((await edit(sixty, { amount: 45 })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20)], [true, false]);
+  // No longer an expense: it pays nothing.
+  assert.equal((await edit(sixty, { amount: 45, direction: 'income' })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20)], [false, false]);
+
+  // Categorized to the utility: the payment spreads over open bills, oldest first.
+  const db = testDbClient();
+  await db.connect();
+  let gasCat: number;
+  try {
+    gasCat = (await db.query(`SELECT id FROM categories WHERE book_id = $1 AND managed AND source_kind = 'utility' AND source_id = $2`, [bookId, gas])).rows[0].id;
+  } finally {
+    await db.end();
+  }
+  const c40 = await bill(40);
+  const c20 = await bill(20);
+  const byCat = (await client.post('/api/transactions', { amount: 60, account_id: acct, direction: 'expense', txn_date: '2026-07-05', posted_date: '2026-07-05', category_id: gasCat })).body.id;
+  // The earlier bills were reopened above, so they're oldest: the $60 settles them.
+  assert.deepEqual([await paid(b40), await paid(b20), await paid(c40), await paid(c20)], [true, true, false, false]);
+  assert.equal((await edit(byCat, { txn_date: '2026-07-05', category_id: gasCat, merchant: 'Renamed' })).status, 200);
+  assert.deepEqual([await paid(b40), await paid(b20), await paid(c40), await paid(c20)], [true, true, false, false], 'unchanged by a merchant edit');
 });
