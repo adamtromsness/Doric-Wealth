@@ -54,8 +54,12 @@ services:
     ports:
       - "127.0.0.1:4100:4000"
 
-  # Nightly pg_dump to a host folder (on the Windows side by default), pruned
-  # after BACKUP_KEEP_DAYS. Takes one dump at start, then every 24h.
+  # Nightly pg_dump to a host folder (on the Windows side by default), pruned after
+  # BACKUP_KEEP_DAYS. Every 15 minutes it checks whether the newest scheduled dump is
+  # over 24 hours old (or missing) and takes one if so, so sleep, restarts, and
+  # missed nights catch up instead of resetting a 24-hour timer. The script is inline
+  # (no file mounted from WSL), so it starts even if Docker comes up before WSL does.
+  # ($$ escapes $ from compose interpolation.)
   backup:
     image: postgres:16-alpine
     container_name: doric_local_backup
@@ -71,8 +75,27 @@ services:
       KEEP_DAYS: ${BACKUP_KEEP_DAYS:-30}
     volumes:
       - ${BACKUP_DIR:?set BACKUP_DIR in .env.production}:/backups
-      - ./scripts/local-prod/backup-loop.sh:/backup-loop.sh:ro
-    entrypoint: ["/bin/sh", "/backup-loop.sh"]
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -u
+        echo "$$(date -u +%FT%TZ) backup scheduler started (checks every 15 minutes)"
+        while true; do
+          # Scheduled dumps end in Z.dump; manual ones end in -manual.dump.
+          latest=$$(ls -1t /backups/doric-*Z.dump 2>/dev/null | head -1)
+          if [ -z "$$latest" ] || [ -z "$$(find "$$latest" -mmin -1440 2>/dev/null)" ]; then
+            f="/backups/doric-$$(date -u +%Y%m%dT%H%M%SZ).dump"
+            if pg_dump -Fc -f "$$f.partial"; then
+              mv "$$f.partial" "$$f"
+              echo "$$(date -u +%FT%TZ) backup ok: $$f ($$(du -h "$$f" | cut -f1))"
+            else
+              rm -f "$$f.partial"
+              echo "$$(date -u +%FT%TZ) backup FAILED; retrying in 15 minutes" >&2
+            fi
+            find /backups -name 'doric-*.dump' -mtime +"$$KEEP_DAYS" -delete
+          fi
+          sleep 900
+        done
 
 volumes:
   doric_local_pgdata:
