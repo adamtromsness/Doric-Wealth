@@ -47,8 +47,30 @@ if (config.trustProxy) app.set('trust proxy', 1);
 // Security headers first, so every response carries them — including error
 // responses and the SPA's index.html served from web/dist below.
 app.use(securityHeaders);
-// CORS must allow credentials so the session cookie is sent cross-origin (dev).
-app.use(cors(config.webOrigin ? { origin: config.webOrigin, credentials: true } : { origin: true, credentials: true }));
+// Cross-origin access. The app serves its own pages and API from one origin (and the
+// dev server proxies /api), so by default no other origin is granted access. Set
+// WEB_ORIGIN only if the web app is served from a different origin than the API.
+app.use(cors(config.webOrigin ? { origin: config.webOrigin, credentials: true } : { origin: false }));
+
+// Reject state-changing requests that a browser marks as coming from another site.
+// Browsers send Origin on cross-site (and same-origin) POST/PUT/PATCH/DELETE; a page on
+// another site can't forge it, so this blocks cross-site request forgery even from
+// sibling (same-site) origins that SameSite=Lax cookies don't separate. Requests
+// without an Origin (curl, server-to-server) carry no browser cookies and pass.
+function sameOriginForWrites(req: express.Request, _res: express.Response, next: express.NextFunction) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const origin = req.get('origin');
+  if (!origin) return next();
+  let host = '';
+  try { host = new URL(origin).host; } catch { /* malformed → rejected below */ }
+  const allowed = new Set<string>([req.get('host') ?? '']);
+  for (const o of [config.webOrigin, config.appBaseUrl]) {
+    try { if (o) allowed.add(new URL(o).host); } catch { /* ignore a malformed setting */ }
+  }
+  if (host && allowed.has(host)) return next();
+  next(new HttpError(403, 'This request came from another website and was blocked.'));
+}
+app.use('/api', sameOriginForWrites);
 // Liveness/readiness probes stay open (no auth, no token) — registered before the
 // API-token guard and body parsers so orchestrators can probe cheaply.
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
